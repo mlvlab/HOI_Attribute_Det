@@ -1,0 +1,12 @@
+**/__pycache__/**
+data/**
+params/**
+logs/**
+video/**
+vis/**
+output_video/**
+checkpoints/**
+.venv/
+checkpoint/**
+!.gitkeep
+
