@@ -1,13 +1,3 @@
-# ------------------------------------------------------------------------
-# Copyright (c) Hitachi, Ltd. All Rights Reserved.
-# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
-# ------------------------------------------------------------------------
-# Modified from DETR (https://github.com/facebookresearch/detr)
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-# ------------------------------------------------------------------------
-"""
-Train and eval functions used in main.py
-"""
 import math
 import os
 import sys
@@ -23,10 +13,8 @@ import util.misc as utils
 from datasets.coco_eval import CocoEvaluator
 from datasets.panoptic_eval import PanopticEvaluator
 from datasets.hico_eval import HICOEvaluator
-from datasets.vcoco_eval import VCOCOEvaluator, VCOCOEvaluator_orig
+from datasets.vcoco_eval import VCOCOEvaluator
 from datasets.vaw_eval import VAWEvaluator
-from mixup.mixup import mixup_data, mixup_criterion
-
 
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
@@ -34,14 +22,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     device: torch.device, epoch: int, max_norm: float = 0, log: bool = False, args=None):
     model.train()
     criterion.train()
-
-    
-    #metric_logger : MetricLogger(object) class의 instance 
-    metric_logger = utils.MetricLogger(delimiter="") #default 값 self.delimiter = '\t'
+    metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
-    
-
-
     if hasattr(criterion, 'loss_labels'):
         metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
     # else:
@@ -52,24 +34,17 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     print_freq = 10
     # import pdb;pdb.set_trace()    
     # max([len(d.dataset)//(args.batch_size*utils.get_world_size()) for d in data_loader])
-    
-    '''
-    def log_every(self, iterable, print_freq, header=None):
-    '''
     for samples,targets in metric_logger.log_every(data_loader, print_freq, header):
         # print([t['dataset'] for t in targets])
         assert len(set([t['dataset'] for t in targets]))==1
+        # print(len(targets))
+        # import pdb;pdb.set_trace()      
         samples = samples.to(device)
         targets = [{k: v.to(device)  if type(v)!=str else v for k, v in t.items()} for t in targets]
-        target_verb = [target['verb_labels'] for target in targets]
-        #import pdb; pdb.set_trace()
-        #inputs, targets_a, targets_b, lam = mixup_data(samples.tensors, target_verb, 0.2) #inputs, targets,args.alpha
-
         dtype=targets[0]['type']
         dataset=targets[0]['dataset']
-
+        # import pdb;pdb.set_trace()
         outputs = model(samples,dtype,dataset)
-        #outputs = model(samples)
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
@@ -196,47 +171,6 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
         stats['PQ_st'] = panoptic_res["Stuff"]
     return stats, coco_evaluator
 
-@torch.no_grad()
-def evaluate_hoi(dataset_file, model, postprocessors, data_loader, subject_category_id, device):
-    model.eval()
-
-    metric_logger = utils.MetricLogger(delimiter="  ")
-    header = 'Test:'
-
-    preds = []
-    gts = []
-    indices = []
-    for samples, targets in metric_logger.log_every(data_loader, 10, header):
-        samples = samples.to(device)
-        
-        
-        outputs = model(samples)
-        orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
-        results = postprocessors['hoi'](outputs, orig_target_sizes)
-
-        preds.extend(list(itertools.chain.from_iterable(utils.all_gather(results))))
-        # For avoiding a runtime error, the copy is used
-        gts.extend(list(itertools.chain.from_iterable(utils.all_gather(copy.deepcopy(targets)))))
-
-    # gather the stats from all processes
-    metric_logger.synchronize_between_processes()
-
-    img_ids = [img_gts['id'] for img_gts in gts]
-    _, indices = np.unique(img_ids, return_index=True)
-    preds = [img_preds for i, img_preds in enumerate(preds) if i in indices]
-    gts = [img_gts for i, img_gts in enumerate(gts) if i in indices]
-
-    dataset_name = os.fspath(data_loader.dataset.img_folder)
-    #import pdb; pdb.set_trace()
-    if dataset_file == 'hico':
-        evaluator = HICOEvaluator(preds, gts, subject_category_id, data_loader.dataset.rare_triplets,
-                                  data_loader.dataset.non_rare_triplets, data_loader.dataset.correct_mat)
-    elif dataset_file == 'vcoco':
-        evaluator = VCOCOEvaluator_orig(preds, gts, subject_category_id, data_loader.dataset.correct_mat)
-
-    stats = evaluator.evaluate()
-
-    return stats, dataset_name
 
 @torch.no_grad()
 def evaluate_hoi_att(dataset_file, model, postprocessors, data_loader, subject_category_id, device,args=None):
@@ -249,12 +183,11 @@ def evaluate_hoi_att(dataset_file, model, postprocessors, data_loader, subject_c
     gts = []
     indices = []
     for samples, targets in metric_logger.log_every(data_loader, 10, header):
-        dtype = targets[0]['type'] #
-        dataset=targets[0]['dataset'] #'hico','vcoco','vaw'
+        dtype = targets[0]['type']
+        dataset=targets[0]['dataset']
         samples = samples.to(device)
-        #import pdb; pdb.set_trace()
-        outputs = model(samples,dtype,dataset)
 
+        outputs = model(samples,dtype,dataset)
         orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
         results = postprocessors(outputs, orig_target_sizes)
 

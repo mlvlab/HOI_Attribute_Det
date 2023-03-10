@@ -1,10 +1,3 @@
-# ------------------------------------------------------------------------
-# Copyright (c) Hitachi, Ltd. All Rights Reserved.
-# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
-# ------------------------------------------------------------------------
-# Modified from DETR (https://github.com/facebookresearch/detr)
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-# ------------------------------------------------------------------------
 import argparse
 import datetime
 import json
@@ -19,14 +12,11 @@ from torch.utils.data import DataLoader, DistributedSampler
 import datasets
 import util.misc as utils
 from datasets import build_dataset, get_coco_api_from_dataset
-from engine import evaluate, train_one_epoch, evaluate_hoi_att, evaluate_hoi
+from engine import evaluate, train_one_epoch, evaluate_hoi_att
 from models import build_model
 from torch.utils.data.dataset import ConcatDataset
 from util.sampler import BatchSchedulerSampler, ComboBatchSampler
 import wandb
-import warnings
-
-warnings.filterwarnings("ignore")
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Set transformer detector', add_help=False)
@@ -74,9 +64,7 @@ def get_args_parser():
     # HOI
     parser.add_argument('--hoi', action='store_true',
                         help="Train for HOI if the flag is provided")
-    parser.add_argument('--mtl_divide', action='store_true',
-                        help="mtl for divided decoder (for hoi, for attr)")
-    parser.add_argument('--num_obj_classes', type=int, default=81,
+    parser.add_argument('--num_obj_classes', type=int, default=80,
                         help="Number of object classes")
     parser.add_argument('--num_verb_classes', type=int, default=117,
                         help="Number of verb classes")
@@ -159,6 +147,8 @@ def get_args_parser():
     parser.add_argument('--remove_difficult', action='store_true')
     parser.add_argument('--data_path', type=str)
 
+    parser.add_argument('--output_dir', default='',
+                        help='path where to save, empty for no saving')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
     parser.add_argument('--seed', default=42, type=int)
@@ -178,28 +168,6 @@ def get_args_parser():
     parser.add_argument('--project_name', default='qpic')
     parser.add_argument('--group_name', default='Neubla')
     parser.add_argument('--run_name', default='train_num_1')
-
-    #mix up mode
-    parser.add_argument('--mixup', action='store_true',help='mixup')
-
-
-    #for video vis
-    parser.add_argument('--output_dir', default='output_video/example2.mp4',help='output path')
-    parser.add_argument('--show_vid', action='store_true',help='check video inference')
-    parser.add_argument('--video_file', default='video/example2.mp4',help='video source')
-    parser.add_argument('--checkpoint', default='checkpoints/hoi/checkpoint.pth',help='model checkpoint path')
-    parser.add_argument('--inf_type', default='vcoco',help='inference type')
-    parser.add_argument('--top_k', default=1,type=int,help='top_k value')
-    parser.add_argument('--threshold', default=0.3,type=float,help='threshold value')
-    parser.add_argument('--fps', default=30,type=int,help='fps')
-    parser.add_argument('--all', action='store_true',help='check hoi+attribute inference')
-    parser.add_argument('--color', action='store_true',help='only color inference for vaw')
-    
-    parser.add_argument('--webcam', default='', type=str)
-    parser.add_argument('--vis_demo',action='store_true')
-    parser.add_argument('--iou_threshold', default=0.9,type=float,help='iou threshold value')
-    
-    
     return parser
 
 
@@ -224,16 +192,15 @@ def main(args):
         from pytorch_lightning.trainer.supporters import CombinedLoader
         dataset_train = build_dataset(image_set='train', args=args)
         dataset_val = build_dataset(image_set='val', args=args)
-        #import pdb; pdb.set_trace()
+      
         if 'vaw' in args.mtl_data:
             
             args.num_att_classes = dataset_train[-1].num_attributes() 
 
         if args.distributed:
-
+            
             sampler_train = [torch.utils.data.DistributedSampler(d) for d in dataset_train]
             sampler_val = [torch.utils.data.DistributedSampler(dv,shuffle=False) for dv in dataset_val]
-
         else:
             sampler_train = [torch.utils.data.RandomSampler(d)for d in dataset_train]
             sampler_val = [torch.utils.data.SequentialSampler(dv) for dv in dataset_val]
@@ -248,7 +215,7 @@ def main(args):
         data_loader_val = [DataLoader(dv, args.batch_size, sampler=sv,
                                     drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers) for dv,sv in zip(dataset_val,sampler_val)]
        
-        #import pdb; pdb.set_trace()
+
     else:
         dataset_train = build_dataset(image_set='train', args=args)
         dataset_val = build_dataset(image_set='val', args=args)
@@ -270,8 +237,7 @@ def main(args):
                                     collate_fn=utils.collate_fn, num_workers=args.num_workers)
         data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val,
                                     drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers)
-    #import pdb;pdb.set_trace()
-    
+    # import pdb;pdb.set_trace()
     model, criterion, postprocessors = build_model(args)
     model.to(device)
 
@@ -281,6 +247,7 @@ def main(args):
         model_without_ddp = model.module
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print('number of params:', n_parameters)
+
     param_dicts = [
         {"params": [p for n, p in model_without_ddp.named_parameters() if "backbone" not in n and p.requires_grad]},
         {
@@ -317,21 +284,16 @@ def main(args):
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             args.start_epoch = checkpoint['epoch'] + 1
-            
     elif args.pretrained:
         checkpoint = torch.load(args.pretrained, map_location='cpu')
         model_without_ddp.load_state_dict(checkpoint['model'],strict=False)
-        #import pdb; pdb.set_trace()
+
     if args.eval:
         if args.hoi or args.att_det or args.mtl:
             if args.mtl:
                 for dlv in data_loader_val:
                     test_stats,dataset_name = evaluate_hoi_att(args.dataset_file, model, postprocessors, dlv, args.subject_category_id, device, args)
                     if 'v-coco' in dataset_name:
-                        log_stats = {**{f'test_{k}': v for k, v in test_stats.items()}}
-                        if args.output_dir:
-                            with (output_dir / "log.txt").open("a") as f:
-                                f.write(json.dumps(log_stats) + "\n")
                         if utils.get_rank() == 0 and args.wandb:
                     
                             wandb.log({
@@ -340,10 +302,6 @@ def main(args):
                             })
                         performance=test_stats['mAP_thesis']
                     elif 'hico' in dataset_name:
-                        log_stats = {**{f'test_{k}': v for k, v in test_stats.items()}}
-                        if args.output_dir:
-                            with (output_dir / "log.txt").open("a") as f:
-                                f.write(json.dumps(log_stats) + "\n")
                         if utils.get_rank() == 0 and args.wandb:
                             wandb.log({
                                 'mAP': test_stats['mAP'],
@@ -353,10 +311,6 @@ def main(args):
                             })
                         performance=test_stats['mAP']
                     elif 'vaw' in dataset_name:
-                        log_stats = {**{f'test_{k}': v for k, v in test_stats.items()}}
-                        if args.output_dir:
-                            with (output_dir / "log.txt").open("a") as f:
-                                f.write(json.dumps(log_stats) + "\n")
                         if utils.get_rank() == 0 and args.wandb:
                             wandb.log({
                                 'mAP': test_stats['mAP'],
@@ -367,8 +321,7 @@ def main(args):
                         performance=test_stats['mAP']
                     coco_evaluator = None
             else:
-                #test_stats,dataset_name = evaluate_hoi_att(args.dataset_file, model, postprocessors, data_loader_val, args.subject_category_id, device, args)
-                test_stats = evaluate_hoi(args.dataset_file, model, postprocessors, data_loader_val, args.subject_category_id, device)
+                test_stats,dataset_name = evaluate_hoi_att(args.dataset_file, model, postprocessors, data_loader_val, args.subject_category_id, device, args)
                 if 'v-coco' in dataset_name:
                     if utils.get_rank() == 0 and args.wandb:
                 
@@ -438,20 +391,12 @@ def main(args):
                     'epoch': epoch,
                     'args': args,
                 }, checkpoint_path)
-        if (epoch+1)%1==0:
+        if (epoch+1)%5==0:
             if args.hoi or args.att_det or args.mtl:
-                #for multi task learning
                 if args.mtl:
                     for dlv in data_loader_val:
                         test_stats,dataset_name = evaluate_hoi_att(args.dataset_file, model, postprocessors, dlv, args.subject_category_id, device, args)
                         if 'v-coco' in dataset_name:
-                            log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                            **{f'test_{k}': v for k, v in test_stats.items()},
-                            'epoch': epoch,
-                            'n_parameters': n_parameters}
-                            if args.output_dir and utils.is_main_process():
-                                with (output_dir / "log.txt").open("a") as f:
-                                    f.write(json.dumps(log_stats) + "\n")
                             if utils.get_rank() == 0 and args.wandb:
                         
                                 wandb.log({
@@ -460,13 +405,6 @@ def main(args):
                                 })
                             performance=test_stats['mAP_thesis']
                         elif 'hico' in dataset_name:
-                            log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                            **{f'test_{k}': v for k, v in test_stats.items()},
-                            'epoch': epoch,
-                            'n_parameters': n_parameters}
-                            if args.output_dir and utils.is_main_process():
-                                with (output_dir / "log.txt").open("a") as f:
-                                    f.write(json.dumps(log_stats) + "\n")
                             if utils.get_rank() == 0 and args.wandb:
                                 wandb.log({
                                     'mAP': test_stats['mAP'],
@@ -476,13 +414,6 @@ def main(args):
                                 })
                             performance=test_stats['mAP']
                         elif 'vaw' in dataset_name:
-                            log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                            **{f'test_{k}': v for k, v in test_stats.items()},
-                            'epoch': epoch,
-                            'n_parameters': n_parameters}
-                            if args.output_dir and utils.is_main_process():
-                                with (output_dir / "log.txt").open("a") as f:
-                                    f.write(json.dumps(log_stats) + "\n")
                             if utils.get_rank() == 0 and args.wandb:
                                 wandb.log({
                                     'mAP': test_stats['mAP'],
@@ -492,20 +423,9 @@ def main(args):
                                 })
                             performance=test_stats['mAP']
                         coco_evaluator = None
-
-            
-                #single task learning
                 else:
-
-                    test_stats, dataset_name = evaluate_hoi(args.dataset_file, model, postprocessors, data_loader_val, args.subject_category_id, device)
+                    test_stats,dataset_name = evaluate_hoi_att(args.dataset_file, model, postprocessors, data_loader_val, args.subject_category_id, device, args)
                     if 'v-coco' in dataset_name:
-                        log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                            **{f'test_{k}': v for k, v in test_stats.items()},
-                            'epoch': epoch,
-                            'n_parameters': n_parameters}
-                        if args.output_dir and utils.is_main_process():
-                            with (output_dir / "log.txt").open("a") as f:
-                                f.write(json.dumps(log_stats) + "\n")
                         if utils.get_rank() == 0 and args.wandb:
                     
                             wandb.log({
@@ -514,13 +434,6 @@ def main(args):
                             })
                         performance=test_stats['mAP_thesis']
                     elif 'hico' in dataset_name:
-                        log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                            **{f'test_{k}': v for k, v in test_stats.items()},
-                            'epoch': epoch,
-                            'n_parameters': n_parameters}
-                        if args.output_dir and utils.is_main_process():
-                            with (output_dir / "log.txt").open("a") as f:
-                                f.write(json.dumps(log_stats) + "\n")
                         if utils.get_rank() == 0 and args.wandb:
                             wandb.log({
                                 'mAP': test_stats['mAP'],
@@ -530,13 +443,6 @@ def main(args):
                             })
                         performance=test_stats['mAP']
                     elif 'vaw' in dataset_name:
-                        log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                            **{f'test_{k}': v for k, v in test_stats.items()},
-                            'epoch': epoch,
-                            'n_parameters': n_parameters}
-                        if args.output_dir and utils.is_main_process():
-                            with (output_dir / "log.txt").open("a") as f:
-                                f.write(json.dumps(log_stats) + "\n")
                         if utils.get_rank() == 0 and args.wandb:
                             wandb.log({
                                 'mAP': test_stats['mAP'],
@@ -551,14 +457,14 @@ def main(args):
                     model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir
                 )
 
-                log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                            **{f'test_{k}': v for k, v in test_stats.items()},
-                            'epoch': epoch,
-                            'n_parameters': n_parameters}
+            log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
+                        **{f'test_{k}': v for k, v in test_stats.items()},
+                        'epoch': epoch,
+                        'n_parameters': n_parameters}
 
-                if args.output_dir and utils.is_main_process():
-                    with (output_dir / "log.txt").open("a") as f:
-                        f.write(json.dumps(log_stats) + "\n")
+            if args.output_dir and utils.is_main_process():
+                with (output_dir / "log.txt").open("a") as f:
+                    f.write(json.dumps(log_stats) + "\n")
 
                 # for evaluation logs
                 if coco_evaluator is not None:

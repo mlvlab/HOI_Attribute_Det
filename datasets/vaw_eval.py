@@ -52,6 +52,7 @@ class VAWEvaluator():
                 self.sum_gts[double] += 1 # #defaultdict(<function VAWEvaluator.__init__.<locals>.<lambda> at 0x7efc5650a9d0>,{412: 1, 232: 1, 259: 1})
 
         for i, img_preds in enumerate(preds):
+            import pdb; pdb.set_trace()
             #len(preds) : 3452
             #img_preds.keys() : 'labels', 'boxes', 'attr_scores', 'obj_ids'
             #len(img_preds['labels']),len(img_preds['boxes']),len(img_preds['attr_scores']),len(img_preds['obj_ids']) : 100
@@ -138,7 +139,6 @@ class VAWEvaluator():
             '''
             attrs = attrs[:self.max_attrs]
             
-
             self.preds.append({
                 'predictions': bboxes, #{'bbox': array([2.3223832e-01, 2.0291336e+02, 8.1720352e+01, 3.4907608e+02],dtype=float32), 'category_id'(object_id): 56}
                 'attr_prediction': attrs #{'object_id'(query_id): 76, 'category_id'(attribute_id): 49, 'score': 0.29883718}

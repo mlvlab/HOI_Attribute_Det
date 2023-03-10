@@ -10,7 +10,7 @@ python -u main.py \
     --run_name ${EXP_DIR} \
     --project_name QPIC_VAW \
     --mtl \
-    --batch_size 8 \
+    --batch_size 4 \
     --update_obj_att \
     --epochs 90 \
     --lr_drop 30 \

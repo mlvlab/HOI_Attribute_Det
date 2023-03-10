@@ -9,4 +9,7 @@ checkpoints/**
 .venv/
 checkpoint/**
 !.gitkeep
-
+checkbbox.py
+configs/
+datasets/
+evaluations/
