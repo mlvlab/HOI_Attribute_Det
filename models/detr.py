@@ -319,17 +319,24 @@ def build(args):
 
     if args.mtl:
         num_classes,cost_class,num_obj_classes={},{},{}
-        if 'hico' in args.mtl_data or 'vcoco' in args.mtl_data:
-            if 'hico' in args.mtl_data:
-                num_classes.update({'hico':args.num_hico_verb_classes})
-            if 'vcoco' in args.mtl_data:
-                num_classes.update({'vcoco':args.num_vcoco_verb_classes})
-            cost_class.update({'hoi':args.set_cost_verb_class})
-            # num_obj_classes.update({'hoi':args.num_obj_classes})
-        if 'vaw' in args.mtl_data:
+        if args.freeze_hoi:
+            num_classes.update({'hico':args.num_hico_verb_classes})
+            num_classes.update({'vcoco':args.num_vcoco_verb_classes})
             num_classes.update({'att':args.num_att_classes})
             cost_class.update({'att':args.set_cost_att})
-            # num_obj_classes.update({'att':args.num_obj_att_classes})
+
+        else:
+            if 'hico' in args.mtl_data or 'vcoco' in args.mtl_data:
+                if 'hico' in args.mtl_data:
+                    num_classes.update({'hico':args.num_hico_verb_classes})
+                if 'vcoco' in args.mtl_data:
+                    num_classes.update({'vcoco':args.num_vcoco_verb_classes})
+                cost_class.update({'hoi':args.set_cost_verb_class})
+                # num_obj_classes.update({'hoi':args.num_obj_classes})
+            if 'vaw' in args.mtl_data:
+                num_classes.update({'att':args.num_att_classes})
+                cost_class.update({'att':args.set_cost_att})
+                # num_obj_classes.update({'att':args.num_obj_att_classes})
         args.cost_class = cost_class
         model = DETRHOI(
             backbone,
@@ -426,8 +433,8 @@ def build(args):
                 num_classes.update({'vcoco':args.num_vcoco_verb_classes})
         if 'vaw' in args.mtl_data:
             losses.extend(['att_labels'])
-            if args.update_obj_att:
-                losses.extend(['att_obj_labels','att_obj_cardinality','obj_att_boxes'])
+            # if args.update_obj_att:
+            #     losses.extend(['att_obj_labels','att_obj_cardinality','obj_att_boxes'])
             if 'vaw' in args.mtl_data:
                 num_classes.update({'vaw':args.num_att_classes})
         criterion = SetCriterionHOI(args.num_obj_classes, args.num_queries, num_classes, matcher=matcher,

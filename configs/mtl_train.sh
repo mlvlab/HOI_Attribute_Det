@@ -10,10 +10,10 @@ python -u main.py \
     --run_name ${EXP_DIR} \
     --project_name QPIC_VAW \
     --mtl \
-    --batch_size 4 \
+    --batch_size 8 \
     --update_obj_att \
     --epochs 90 \
-    --lr_drop 30 \
+    --lr_drop 60 \
     --dataset_file vaw \
     --data_path data/vaw \
     --num_obj_att_classes 80 \

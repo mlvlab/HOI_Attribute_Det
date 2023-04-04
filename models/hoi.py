@@ -13,6 +13,9 @@ from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
                        accuracy, get_world_size, interpolate,
                        is_dist_avail_and_initialized)
 from util.fed import load_class_freq, get_fed_loss_inds                       
+from .layers.roi_align import ROIAlign
+from typing import List
+import numpy as np
 
 
 class DETRHOI(nn.Module):
@@ -26,70 +29,300 @@ class DETRHOI(nn.Module):
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
         self.mtl = args.mtl
         if args.mtl:
-            if 'hico' in args.mtl_data or 'vcoco' in args.mtl_data:
-                self.sub_bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
-                
-                # self.obj_class_embed = nn.Linear(hidden_dim, num_obj_classes + 1)
-                if 'vcoco' in args.mtl_data:
-                    self.vcoco_verb_class_embed = nn.Linear(hidden_dim, num_classes['vcoco'])
-                if 'hico' in args.mtl_data:
-                    self.hico_verb_class_embed = nn.Linear(hidden_dim, num_classes['hico'])
-            if 'vaw' in args.mtl_data:
-                self.att_class_embed = nn.Linear(hidden_dim, num_classes['att'])
-            self.obj_class_embed = nn.Linear(hidden_dim, num_obj_classes + 1)
+            if args.freeze_hoi:
+                self.sub_bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)                
+                self.vcoco_verb_class_embed = nn.Linear(hidden_dim, num_classes['vcoco'])
+                self.hico_verb_class_embed = nn.Linear(hidden_dim, num_classes['hico'])
+                self.obj_class_embed = nn.Linear(hidden_dim, num_obj_classes + 1)
+                if args.br:
+                    if args.fc_version:
+                        self.attribute_fc1 = nn.Linear(backbone.num_channels, backbone.num_channels)
+                        self.attribute_fc2 = nn.Linear(backbone.num_channels, backbone.num_channels)
+                        self.attribute_class_embed = nn.Linear(backbone.num_channels, num_classes['att'])
+                    else:
+                        self.attribute_input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)                
+                        self.attribute_class_embed = nn.Linear(hidden_dim, num_classes['att'])
+                        self.attribute_input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)                
+                        self.attribute_conv = nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, stride=1, padding=1)
+                else:
+                    self.attribute_input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)                
+                    self.attribute_class_embed = nn.Linear(hidden_dim, num_classes['att'])
+                    self.attribute_input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)                
+                    self.attribute_conv = nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, stride=1, padding=1)
+
+                self.attribute_roi_align = ROIAlign(output_size=(7,7), spatial_scale=1.0, sampling_ratio=-1, aligned=True)
+                self.attribute_avgpool = nn.AdaptiveAvgPool2d((1, 1))
+
+
+            else:
+                if 'hico' in args.mtl_data or 'vcoco' in args.mtl_data:
+                    self.sub_bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)                
+                    if 'vcoco' in args.mtl_data:
+                        #import pdb; pdb.set_trace()
+                        self.vcoco_verb_class_embed = nn.Linear(hidden_dim, num_classes['vcoco'])
+                    if 'hico' in args.mtl_data:
+                        self.hico_verb_class_embed = nn.Linear(hidden_dim, num_classes['hico'])
+
+                    self.obj_class_embed = nn.Linear(hidden_dim, num_obj_classes + 1)
+
+                if 'vaw' in args.mtl_data:
+
+                    if args.br:
+                        self.attribute_input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
+                    self.attribute_conv = nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, stride=1, padding=1)
+                    self.attribute_roi_align = ROIAlign(output_size=(7,7), spatial_scale=1.0, sampling_ratio=-1, aligned=True)
+                    self.attribute_class_embed = nn.Linear(hidden_dim, num_classes['att'])
+                    self.attribute_avgpool = nn.AdaptiveAvgPool2d((1, 1))
+
+
+            
         else:
             if args.hoi:
                 self.sub_bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
                 self.verb_class_embed = nn.Linear(hidden_dim, num_classes['hoi'])
-                # self.obj_class_embed = nn.Linear(hidden_dim, num_obj_classes + 1)
+
             elif args.att_det:
                 self.att_class_embed = nn.Linear(hidden_dim, num_classes['att'])
             self.obj_class_embed = nn.Linear(hidden_dim, num_obj_classes + 1)
+
         self.obj_bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
-    
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
         self.backbone = backbone
         self.aux_loss = aux_loss
+        if args.show_vid:
+            self.show_vid = args.show_vid
 
-    def forward(self, samples: NestedTensor, dtype: str='', dataset:str=''):
+
+    def forward(self, samples: NestedTensor, targets=None, dtype: str='', dataset:str='',args=None, eval=None):
         if not isinstance(samples, NestedTensor):
             samples = nested_tensor_from_tensor_list(samples)
+
         features, pos = self.backbone(samples)
-
-        src, mask = features[-1].decompose()
+        src, mask = features[-1].decompose()        
         assert mask is not None
-        hs = self.transformer(self.input_proj(src), mask, self.query_embed.weight, pos[-1])[0]
+        #encoder_src = self.input_proj(src)
+        #hs = self.transformer(encoder_src, mask, self.query_embed.weight, pos[-1])[0]
 
-        
-        if dtype=='att':
-            outputs_class = self.att_class_embed(hs)            
-            # outputs_obj_class = self.obj_class_embed(hs)
-        elif dtype=='hoi':
+        if dtype=='att':           
+            if not self.training:   
+                if self.show_vid: #for in the wild video inference
+                    box_tensors = torch.Tensor([int(0)] + targets.tolist()).unsqueeze(0) # [1,5] : frame 한 장씩
+                    encoder_src = self.input_proj(src)
+                    B,C,H,W = encoder_src.shape 
+                    encoder_src = encoder_src.flatten(2).permute(2, 0, 1)
+                    pos_embed = pos[-1].flatten(2).permute(2, 0, 1)
+                    mask = mask.flatten(1)
+                    memory = self.transformer.encoder(encoder_src, src_key_padding_mask=mask, pos=pos_embed)
+                    encoder_output = memory.permute(1, 2, 0) 
+                    encoder_output = encoder_output.view([B,C,H,W]) 
+                    feature_H, feature_W = encoder_output.shape[2], encoder_output.shape[3]
+                
+                    #normalize box size                    
+                    box_tensors[...,1], box_tensors[...,3] = feature_W*box_tensors[...,1]/samples.tensors.shape[-1], feature_W*box_tensors[...,3]/samples.tensors.shape[-1] 
+                    box_tensors[...,2], box_tensors[...,4] = feature_H*box_tensors[...,2]/samples.tensors.shape[-2], feature_H*box_tensors[...,4]/samples.tensors.shape[-2]
+                                        
+                    pooled_feature = self.attribute_roi_align(input = encoder_output, rois = box_tensors.cuda()) 
+                    x = self.attribute_conv(pooled_feature) 
+                    x = self.attribute_avgpool(x) 
+                    x = torch.flatten(x, 1)
+                    outputs_class = self.attribute_class_embed(x)
+                    return outputs_class.sigmoid()
+
+
+                object_boxes = torch.cat([torch.stack([target['boxes'][...,0]/target['orig_size'][1],target['boxes'][...,1]/target['orig_size'][0],target['boxes'][...,2]/target['orig_size'][1],target['boxes'][...,3]/target['orig_size'][0]],axis=1) for target in targets])
+                batch_index = torch.cat([torch.Tensor([int(i)]) for i, target in enumerate(targets) for _ in target['boxes']])
+                box_tensors = torch.cat([batch_index.unsqueeze(1).cuda(),object_boxes.cuda()], axis=1) #[K,5]
+                if args.fc_version:
+                    backbone_output = features[0].tensors #torch.Size([B, 2048, 35, 31]) -> torch.Size([B, 256, 35, 31])
+                    feature_H, feature_W = backbone_output.shape[2], backbone_output.shape[3]
+                        
+                    box_tensors[...,1], box_tensors[...,3] = feature_W*box_tensors[...,1], feature_W*box_tensors[...,3] 
+                    box_tensors[...,2], box_tensors[...,4] = feature_H*box_tensors[...,2], feature_H*box_tensors[...,4] 
+
+                    #feature_output : torch.Size([4, 256, 35, 31])
+                    pooled_feature = self.attribute_roi_align(input = backbone_output, rois = box_tensors.cuda()) 
+                    #x = self.attribute_conv(pooled_feature) 
+                    x = self.attribute_avgpool(pooled_feature) 
+                    x = torch.flatten(x, 1)
+                    #import pdb; pdb.set_trace()
+                    x = self.attribute_fc1(x) #차원수 맞춰줘야함.
+                    x = self.attribute_fc2(x)
+                    outputs_class = self.attribute_class_embed(x)
+
+                
+                else:
+                    if args.br: #backbone feature roi align
+                        backbone_output = self.attribute_input_proj(features[0].tensors) #torch.Size([B, 2048, 35, 31]) -> torch.Size([B, 256, 35, 31])
+                        feature_H, feature_W = backbone_output.shape[2], backbone_output.shape[3]
+                        
+                        box_tensors[...,1], box_tensors[...,3] = feature_W*box_tensors[...,1], feature_W*box_tensors[...,3] 
+                        box_tensors[...,2], box_tensors[...,4] = feature_H*box_tensors[...,2], feature_H*box_tensors[...,4] 
+
+                        #feature_output : torch.Size([4, 256, 35, 31])
+                        pooled_feature = self.attribute_roi_align(input = backbone_output, rois = box_tensors.cuda()) 
+                        x = self.attribute_conv(pooled_feature) 
+                        x = self.attribute_avgpool(x) 
+                        x = torch.flatten(x, 1)
+                        outputs_class = self.attribute_class_embed(x) #torch.Size([K, 620])
+                        
+                    else: #encoder feature roi align
+                        encoder_src = self.input_proj(src)
+                        B,C,H,W = encoder_src.shape 
+                        encoder_src = encoder_src.flatten(2).permute(2, 0, 1)
+                        pos_embed = pos[-1].flatten(2).permute(2, 0, 1)
+                        mask = mask.flatten(1)
+                        memory = self.transformer.encoder(encoder_src, src_key_padding_mask=mask, pos=pos_embed)
+                        encoder_output = memory.permute(1, 2, 0) 
+                        encoder_output = encoder_output.view([B,C,H,W]) 
+                        feature_H, feature_W = encoder_output.shape[2], encoder_output.shape[3]
+                    
+                        #unnormalize box size to feature map size 
+                        box_tensors[...,1], box_tensors[...,3] = feature_W*box_tensors[...,1], feature_W*box_tensors[...,3] 
+                        box_tensors[...,2], box_tensors[...,4] = feature_H*box_tensors[...,2], feature_H*box_tensors[...,4] 
+                        
+                        pooled_feature = self.attribute_roi_align(input = encoder_output, rois = box_tensors.cuda()) 
+                        x = self.attribute_conv(pooled_feature) 
+                        x = self.attribute_avgpool(x) 
+                        x = torch.flatten(x, 1)
+                        outputs_class = self.attribute_class_embed(x)
             
+            else:
+                if args.fc_version:
+                    if args.br: #backbone feature roi align    
+                        object_boxes = torch.cat([torch.stack([target['boxes'][...,0]/target['orig_size'][1],target['boxes'][...,1]/target['orig_size'][0],target['boxes'][...,2]/target['orig_size'][1],target['boxes'][...,3]/target['orig_size'][0]],axis=1) for target in targets])
+                        batch_index = torch.cat([torch.Tensor([int(i)]) for i, target in enumerate(targets) for _ in target['boxes']])
+                        box_tensors = torch.cat([batch_index.unsqueeze(1).cuda(),object_boxes.cuda()], axis=1) #[K,5]
+                        backbone_output = features[0].tensors #torch.Size([B, 2048, 35, 31]) -> torch.Size([B, 256, 35, 31])
+                        feature_H, feature_W = backbone_output.shape[2], backbone_output.shape[3]
+                        
+                        box_tensors[...,1], box_tensors[...,3] = feature_W*box_tensors[...,1], feature_W*box_tensors[...,3] 
+                        box_tensors[...,2], box_tensors[...,4] = feature_H*box_tensors[...,2], feature_H*box_tensors[...,4] 
+
+                        #feature_output : torch.Size([4, 256, 35, 31])
+                        pooled_feature = self.attribute_roi_align(input = backbone_output, rois = box_tensors.cuda()) 
+                        #x = self.attribute_conv(pooled_feature) 
+                        x = self.attribute_avgpool(pooled_feature) 
+                        x = torch.flatten(x, 1)
+                        #import pdb; pdb.set_trace()
+                        x = self.attribute_fc1(x) #차원수 맞춰줘야함.
+                        x = self.attribute_fc2(x)
+                        outputs_class = self.attribute_class_embed(x)
+
+                    else: #encoder feature roi align-> freeze해야함.
+                        object_boxes = [torch.Tensor([int(i)]+self.convert_bbox(box.tolist())) for i, target in enumerate(targets) for box in target['boxes']]
+                        box_tensors = torch.stack(object_boxes,0) #[K,5] , K: box annotation length in mini-batch
+                        encoder_src = self.input_proj(src)
+                        B,C,H,W = encoder_src.shape
+                        encoder_src = encoder_src.flatten(2).permute(2, 0, 1)
+                        pos_embed = pos[-1].flatten(2).permute(2, 0, 1)
+                        mask = mask.flatten(1)
+                        memory = self.transformer.encoder(encoder_src, src_key_padding_mask=mask, pos=pos_embed)
+                        encoder_output = memory.permute(1, 2, 0) 
+                        encoder_output = encoder_output.view([B,C,H,W]) 
+                        
+                        feature_H, feature_W = encoder_output.shape[2], encoder_output.shape[3]
+
+                        #unnormalize box size
+                        box_tensors[...,1], box_tensors[...,3] = feature_W*box_tensors[...,1], feature_W*box_tensors[...,3] 
+                        box_tensors[...,2], box_tensors[...,4] = feature_H*box_tensors[...,2], feature_H*box_tensors[...,4] 
+                        
+                        pooled_feature = self.attribute_roi_align(input = encoder_output, rois = box_tensors.cuda()) 
+                        x = self.attribute_conv(pooled_feature) 
+                        x = self.attribute_avgpool(x) 
+                        x = torch.flatten(x, 1)
+                        x = self.attribute_fc1(x) #차원수 맞춰줘야함.
+                        x = self.attribute_fc2(x)
+                        outputs_class = self.attribute_class_embed(x)
+
+
+                else:
+                    if args.br: #backbone feature roi align    
+                        object_boxes = torch.cat([torch.stack([target['boxes'][...,0]/target['orig_size'][1],target['boxes'][...,1]/target['orig_size'][0],target['boxes'][...,2]/target['orig_size'][1],target['boxes'][...,3]/target['orig_size'][0]],axis=1) for target in targets])
+                        batch_index = torch.cat([torch.Tensor([int(i)]) for i, target in enumerate(targets) for _ in target['boxes']])
+                        box_tensors = torch.cat([batch_index.unsqueeze(1).cuda(),object_boxes.cuda()], axis=1) #[K,5]
+                        backbone_output = self.attribute_input_proj(features[0].tensors) #torch.Size([B, 2048, 35, 31]) -> torch.Size([B, 256, 35, 31])
+                        feature_H, feature_W = backbone_output.shape[2], backbone_output.shape[3]
+                        
+                        box_tensors[...,1], box_tensors[...,3] = feature_W*box_tensors[...,1], feature_W*box_tensors[...,3] 
+                        box_tensors[...,2], box_tensors[...,4] = feature_H*box_tensors[...,2], feature_H*box_tensors[...,4] 
+
+                        #feature_output : torch.Size([4, 256, 35, 31])
+                        pooled_feature = self.attribute_roi_align(input = backbone_output, rois = box_tensors.cuda()) 
+                        x = self.attribute_conv(pooled_feature) 
+                        x = self.attribute_avgpool(x) 
+                        x = torch.flatten(x, 1)
+                        outputs_class = self.attribute_class_embed(x)
+
+                    else: #encoder feature roi align-> freeze해야함.
+                        object_boxes = [torch.Tensor([int(i)]+self.convert_bbox(box.tolist())) for i, target in enumerate(targets) for box in target['boxes']]
+                        box_tensors = torch.stack(object_boxes,0) #[K,5] , K: box annotation length in mini-batch
+                        encoder_src = self.input_proj(src)
+                        B,C,H,W = encoder_src.shape
+                        encoder_src = encoder_src.flatten(2).permute(2, 0, 1)
+                        pos_embed = pos[-1].flatten(2).permute(2, 0, 1)
+                        mask = mask.flatten(1)
+                        memory = self.transformer.encoder(encoder_src, src_key_padding_mask=mask, pos=pos_embed)
+                        encoder_output = memory.permute(1, 2, 0) 
+                        encoder_output = encoder_output.view([B,C,H,W]) 
+                        
+                        feature_H, feature_W = encoder_output.shape[2], encoder_output.shape[3]
+
+                        #unnormalize box size
+                        box_tensors[...,1], box_tensors[...,3] = feature_W*box_tensors[...,1], feature_W*box_tensors[...,3] 
+                        box_tensors[...,2], box_tensors[...,4] = feature_H*box_tensors[...,2], feature_H*box_tensors[...,4] 
+                        
+                        pooled_feature = self.attribute_roi_align(input = encoder_output, rois = box_tensors.cuda()) 
+                        x = self.attribute_conv(pooled_feature) 
+                        x = self.attribute_avgpool(x) 
+                        x = torch.flatten(x, 1)
+                        outputs_class = self.attribute_class_embed(x)
+
+            out = {'pred_logits': outputs_class,'type': dtype,'dataset':dataset}
+
+            #voutputs_class = self.att_class_embed(hs)            
+            # outputs_obj_class = self.obj_class_embed(hs)
+        
+        elif dtype=='hoi':
+            encoder_src = self.input_proj(src)
+            hs = self.transformer(encoder_src, mask, self.query_embed.weight, pos[-1])[0]
+
             if dataset == 'hico':
                 outputs_class = self.hico_verb_class_embed(hs)
             elif dataset =='vcoco':
+                #import pdb; pdb.set_trace()
                 outputs_class = self.vcoco_verb_class_embed(hs)            
             # outputs_class = self.verb_class_embed(hs)            
             # else:
                 
             #     outputs_class = self.verb_class_embed(hs)            
-        outputs_obj_class = self.obj_class_embed(hs)
-        
-        outputs_obj_coord = self.obj_bbox_embed(hs).sigmoid()
-        out = {'pred_obj_logits': outputs_obj_class[-1], 'pred_logits': outputs_class[-1],
-                'pred_obj_boxes': outputs_obj_coord[-1],'type': dtype,'dataset':dataset}
+            outputs_obj_class = self.obj_class_embed(hs)
+            
+            outputs_obj_coord = self.obj_bbox_embed(hs).sigmoid()
+            out = {'pred_obj_logits': outputs_obj_class[-1], 'pred_logits': outputs_class[-1],
+                    'pred_obj_boxes': outputs_obj_coord[-1],'type': dtype,'dataset':dataset}
+
         if dtype=='hoi':
             outputs_sub_coord = self.sub_bbox_embed(hs).sigmoid()
             out.update({'pred_sub_boxes': outputs_sub_coord[-1]})
+
         if self.aux_loss:
             if dtype=='hoi':
                 out['aux_outputs'] = self._set_aux_loss_hoi(outputs_obj_class, outputs_class,
                                                     outputs_sub_coord, outputs_obj_coord)
-            elif dtype=='att':
-                out['aux_outputs'] = self._set_aux_loss_att(outputs_obj_class, outputs_class,
-                                                     outputs_obj_coord)
+            # elif dtype=='att':
+            #     out['aux_outputs'] = self._set_aux_loss_att(outputs_class)
+
+        #import pdb; pdb.set_trace()
         return out
+
+    def convert_bbox(self,bbox:List): #annotation bbox (c_x,c_y,w,h)-> (x1,y1,x2,y2) for roi align
+        #instance_bbox: [x, y, width, height]
+        c_x, c_y, w,h = bbox[0], bbox[1], bbox[2], bbox[3]
+        x1,y1 = c_x-(w/2), c_y-(h/2)
+        x2,y2 = c_x+(w/2), c_y+(h/2)  
+        # x1,y1 = bbox[0], bbox[1]
+        # x2,y2 = x1 + bbox[2], y1 + bbox[3]
+        return [x1,y1,x2,y2]
 
     @torch.jit.unused
     def _set_aux_loss_hoi(self, outputs_obj_class, outputs_class, outputs_sub_coord, outputs_obj_coord):
@@ -99,14 +332,10 @@ class DETRHOI(nn.Module):
         return [{'pred_obj_logits': a, 'pred_logits': b, 'pred_sub_boxes': c, 'pred_obj_boxes': d}
                 for a, b, c, d in zip(outputs_obj_class[:-1], outputs_class[:-1],
                                       outputs_sub_coord[:-1], outputs_obj_coord[:-1])]
-    @torch.jit.unused
-    def _set_aux_loss_att(self, outputs_obj_class, outputs_class, outputs_obj_coord):
-        # this is a workaround to make torchscript happy, as torchscript
-        # doesn't support dictionary with non-homogeneous values, such
-        # as a dict having both a Tensor and a list.
-        return [{'pred_obj_logits': a, 'pred_logits': b, 'pred_obj_boxes': c}
-                for a, b, c in zip(outputs_obj_class[:-1], outputs_class[:-1],
-                                       outputs_obj_coord[:-1])]
+    # @torch.jit.unused
+    def _set_aux_loss_att(self, outputs_class):
+        return [{'pred_logits': a}
+                for a in outputs_class[:-1]]
 
 
 class MLP(nn.Module):
@@ -148,9 +377,10 @@ class SetCriterionHOI(nn.Module):
     def loss_obj_labels(self, outputs, targets, indices, num_att_or_inter, dtype, log=True):
         
         if dtype=='att':
-            losses={'loss_obj_ce': outputs['pred_obj_logits'].new_zeros([1],dtype=torch.float32)[0]}
+            #losses={'loss_obj_ce': outputs['pred_logits'].new_zeros([1],dtype=torch.float32)[0]}
+            losses={'loss_obj_ce': torch.zeros_like(torch.tensor(1)).cuda()}
             if log:
-                losses.update({'obj_class_error':outputs['pred_obj_logits'].new_zeros([1],dtype=torch.float32)[0]})
+                losses.update({'obj_class_error':outputs['pred_logits'].new_zeros([1],dtype=torch.float32)[0]})
             return losses
         assert 'pred_obj_logits' in outputs
         src_logits = outputs['pred_obj_logits']
@@ -171,7 +401,7 @@ class SetCriterionHOI(nn.Module):
     @torch.no_grad()
     def loss_obj_cardinality(self, outputs, targets, indices, num_att_or_inter, dtype):
         if dtype=='att':
-            return {'obj_cardinality_error': outputs['pred_obj_logits'].new_zeros([1],dtype=torch.float32)[0]}
+            return {'obj_cardinality_error': outputs['pred_logits'].new_zeros([1],dtype=torch.float32)[0]}
         pred_logits = outputs['pred_obj_logits']
         device = pred_logits.device
         tgt_lengths = torch.as_tensor([len(v['obj_labels']) for v in targets], device=device)
@@ -204,10 +434,10 @@ class SetCriterionHOI(nn.Module):
     def loss_sub_obj_boxes(self, outputs, targets, indices, num_att_or_inter,dtype):
         
         if dtype=='att':
-            return {'loss_sub_bbox': outputs['pred_obj_boxes'].new_zeros([1],dtype=torch.float32)[0],
-                    'loss_sub_giou': outputs['pred_obj_boxes'].new_zeros([1],dtype=torch.float32)[0],
-                    'loss_obj_bbox': outputs['pred_obj_boxes'].new_zeros([1],dtype=torch.float32)[0],
-                    'loss_obj_giou': outputs['pred_obj_boxes'].new_zeros([1],dtype=torch.float32)[0]}
+            return {'loss_sub_bbox': outputs['pred_logits'].new_zeros([1],dtype=torch.float32)[0],
+                    'loss_sub_giou': outputs['pred_logits'].new_zeros([1],dtype=torch.float32)[0],
+                    'loss_obj_bbox': outputs['pred_logits'].new_zeros([1],dtype=torch.float32)[0],
+                    'loss_obj_giou': outputs['pred_logits'].new_zeros([1],dtype=torch.float32)[0]}
         assert 'pred_sub_boxes' in outputs and 'pred_obj_boxes' in outputs
         idx = self._get_src_permutation_idx(indices)
         src_sub_boxes = outputs['pred_sub_boxes'][idx]
@@ -240,93 +470,87 @@ class SetCriterionHOI(nn.Module):
         
         if dtype=='hoi':
             return {'loss_att_ce': outputs['pred_logits'].new_zeros([1],dtype=torch.float32)[0]}
-        assert 'pred_logits' in outputs
-        src_logits = outputs['pred_logits']
 
-        idx = self._get_src_permutation_idx(indices)
-        target_classes_o = torch.cat([t['pos_att_classes'][J] for t, (_, J) in zip(targets, indices)])
-        target_classes = torch.zeros_like(src_logits)
-        target_classes[idx] = target_classes_o
 
-        pos_gt_classes = torch.nonzero(target_classes_o==1)[...,-1]
-        # import pdb;pdb.set_trace()
-        neg_classes_o = torch.cat([t["neg_att_classes"] for t in targets])
+        src_logits = outputs['pred_logits'] 
+        target_classes=torch.cat([t['pos_att_classes'] for t in targets])
+
+        pos_gt_classes = torch.nonzero(target_classes==1)[...,-1]
+        neg_classes_o = torch.cat([t['neg_att_classes'] for t in targets])
         neg_gt_classes = torch.nonzero(neg_classes_o==1)[...,-1]
 
         inds = get_fed_loss_inds(
             gt_classes=torch.cat([pos_gt_classes,neg_gt_classes]),
             num_sample_cats=50,
             weight=self.fed_loss_weight,
-            C=src_logits.shape[2])
-
+            C=src_logits.shape[1])
         if self.loss_type == 'bce':
             loss_att_ce = F.binary_cross_entropy_with_logits(src_logits[...,inds], target_classes[...,inds])
         elif self.loss_type == 'focal':
             src_logits = src_logits.sigmoid()
             loss_att_ce = self._neg_loss(src_logits[...,inds], target_classes[...,inds])
-
-        losses = {'loss_att_ce': loss_att_ce}
+        losses = {'loss_att_ce': loss_att_ce}        
         return losses
+
+    # def loss_att_obj_labels(self, outputs, targets, indices, num_att_or_inter,dtype, log=True):
+        
+    #     if dtype=='hoi':
+    #         losses = {'loss_att_obj_ce': outputs['pred_obj_logits'].new_zeros([1],dtype=torch.float32)[0]}
+    #         if log:
+    #             losses.update({'obj_att_class_error':outputs['pred_obj_logits'].new_zeros([1],dtype=torch.float32)[0]})
+    #         return losses
+    #     assert 'pred_obj_logits' in outputs
+    #     src_logits = outputs['pred_obj_logits']
+
+    #     idx = self._get_src_permutation_idx(indices)
+    #     target_classes_o = torch.cat([t['labels'][J] for t, (_, J) in zip(targets, indices)])
+    #     target_classes = torch.full(src_logits.shape[:2], self.num_obj_classes,
+    #                                 dtype=torch.int64, device=src_logits.device)
+    #     target_classes[idx] = target_classes_o
+
+    #     loss_obj_ce = F.cross_entropy(src_logits.transpose(1, 2), target_classes, self.empty_weight)
+    #     losses = {'loss_att_obj_ce': loss_obj_ce}
+
+    #     if log:
+    #         losses['obj_att_class_error'] = 100 - accuracy(src_logits[idx], target_classes_o)[0]
+    #     return losses
+
+    # @torch.no_grad()
+    # def loss_att_obj_cardinality(self, outputs, targets, indices, num_att_or_inter,dtype):
+    #     if dtype=='hoi':
+    #         return {'obj_cardinality_error': torch.tensor(0,dtype=torch.float32,device='cuda')}
+    #     pred_logits = outputs['pred_obj_logits']
+    #     device = pred_logits.device
+    #     tgt_lengths = torch.as_tensor([len(v['labels']) for v in targets], device=device)
+    #     card_pred = (pred_logits.argmax(-1) != pred_logits.shape[-1] - 1).sum(1)
+    #     card_err = F.l1_loss(card_pred.float(), tgt_lengths.float())
+    #     losses = {'obj_cardinality_error': card_err}
+    #     return losses
+
+    # def loss_att_obj_boxes(self, outputs, targets, indices, num_att_or_inter,dtype):
+        
+    #     if dtype=='hoi':
+    #         return {'loss_att_obj_bbox': outputs['pred_obj_boxes'].new_zeros([1],dtype=torch.float32)[0],
+    #                   'loss_att_obj_giou': outputs['pred_obj_boxes'].new_zeros([1],dtype=torch.float32)[0]  }
+    #     assert 'pred_obj_boxes' in outputs
+    #     idx = self._get_src_permutation_idx(indices)
+    #     # src_sub_boxes = outputs['pred_sub_boxes'][idx]
+    #     src_obj_boxes = outputs['pred_obj_boxes'][idx]
+    #     target_obj_boxes = torch.cat([t['boxes'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+
+    #     # exist_obj_boxes = (target_obj_boxes != 0).any(dim=1)
+
+    #     losses = {}
     
-    def loss_att_obj_labels(self, outputs, targets, indices, num_att_or_inter,dtype, log=True):
+    #     # loss_sub_bbox = F.l1_loss(src_sub_boxes, target_sub_boxes, reduction='none')
+    #     loss_obj_bbox = F.l1_loss(src_obj_boxes, target_obj_boxes, reduction='none')
+    #     # losses['loss_sub_bbox'] = loss_sub_bbox.sum() / num_att_or_inter
+    #     losses['loss_att_obj_bbox'] = (loss_obj_bbox).sum() / num_att_or_inter
         
-        if dtype=='hoi':
-            losses = {'loss_att_obj_ce': outputs['pred_obj_logits'].new_zeros([1],dtype=torch.float32)[0]}
-            if log:
-                losses.update({'obj_att_class_error':outputs['pred_obj_logits'].new_zeros([1],dtype=torch.float32)[0]})
-            return losses
-        assert 'pred_obj_logits' in outputs
-        src_logits = outputs['pred_obj_logits']
-
-        idx = self._get_src_permutation_idx(indices)
-        target_classes_o = torch.cat([t['labels'][J] for t, (_, J) in zip(targets, indices)])
-        target_classes = torch.full(src_logits.shape[:2], self.num_obj_classes,
-                                    dtype=torch.int64, device=src_logits.device)
-        target_classes[idx] = target_classes_o
-
-        loss_obj_ce = F.cross_entropy(src_logits.transpose(1, 2), target_classes, self.empty_weight)
-        losses = {'loss_att_obj_ce': loss_obj_ce}
-
-        if log:
-            losses['obj_att_class_error'] = 100 - accuracy(src_logits[idx], target_classes_o)[0]
-        return losses
-
-    @torch.no_grad()
-    def loss_att_obj_cardinality(self, outputs, targets, indices, num_att_or_inter,dtype):
-        if dtype=='hoi':
-            return {'obj_cardinality_error': torch.tensor(0,dtype=torch.float32,device='cuda')}
-        pred_logits = outputs['pred_obj_logits']
-        device = pred_logits.device
-        tgt_lengths = torch.as_tensor([len(v['labels']) for v in targets], device=device)
-        card_pred = (pred_logits.argmax(-1) != pred_logits.shape[-1] - 1).sum(1)
-        card_err = F.l1_loss(card_pred.float(), tgt_lengths.float())
-        losses = {'obj_cardinality_error': card_err}
-        return losses
-
-    def loss_att_obj_boxes(self, outputs, targets, indices, num_att_or_inter,dtype):
+    #     loss_obj_giou = 1 - torch.diag(generalized_box_iou(box_cxcywh_to_xyxy(src_obj_boxes),
+    #                                                         box_cxcywh_to_xyxy(target_obj_boxes)))
         
-        if dtype=='hoi':
-            return {'loss_att_obj_bbox': outputs['pred_obj_boxes'].new_zeros([1],dtype=torch.float32)[0],
-                      'loss_att_obj_giou': outputs['pred_obj_boxes'].new_zeros([1],dtype=torch.float32)[0]  }
-        assert 'pred_obj_boxes' in outputs
-        idx = self._get_src_permutation_idx(indices)
-        # src_sub_boxes = outputs['pred_sub_boxes'][idx]
-        src_obj_boxes = outputs['pred_obj_boxes'][idx]
-        target_obj_boxes = torch.cat([t['boxes'][i] for t, (_, i) in zip(targets, indices)], dim=0)
-
-        # exist_obj_boxes = (target_obj_boxes != 0).any(dim=1)
-
-        losses = {}
-    
-        # loss_sub_bbox = F.l1_loss(src_sub_boxes, target_sub_boxes, reduction='none')
-        loss_obj_bbox = F.l1_loss(src_obj_boxes, target_obj_boxes, reduction='none')
-        # losses['loss_sub_bbox'] = loss_sub_bbox.sum() / num_att_or_inter
-        losses['loss_att_obj_bbox'] = (loss_obj_bbox).sum() / num_att_or_inter
-        
-        loss_obj_giou = 1 - torch.diag(generalized_box_iou(box_cxcywh_to_xyxy(src_obj_boxes),
-                                                            box_cxcywh_to_xyxy(target_obj_boxes)))
-        
-        losses['loss_att_obj_giou'] = loss_obj_giou.sum() / num_att_or_inter
+    #     losses['loss_att_obj_giou'] = loss_obj_giou.sum() / num_att_or_inter
 
 
         return losses
@@ -366,24 +590,38 @@ class SetCriterionHOI(nn.Module):
         return batch_idx, tgt_idx
 
     def get_loss(self, loss, outputs, targets, indices, num, dtype,**kwargs):
+        # loss_map = {
+        #     'obj_labels': self.loss_obj_labels,
+        #     'att_obj_labels':self.loss_att_obj_labels,
+        #     'obj_cardinality': self.loss_obj_cardinality,
+        #     'att_obj_cardinality':self.loss_att_obj_cardinality,
+        #     'verb_labels': self.loss_verb_labels,
+        #     'att_labels': self.loss_att_labels,
+        #     'sub_obj_boxes': self.loss_sub_obj_boxes,
+        #     'obj_att_boxes':self.loss_att_obj_boxes,
+        # }
+
         loss_map = {
             'obj_labels': self.loss_obj_labels,
-            'att_obj_labels':self.loss_att_obj_labels,
             'obj_cardinality': self.loss_obj_cardinality,
-            'att_obj_cardinality':self.loss_att_obj_cardinality,
             'verb_labels': self.loss_verb_labels,
             'att_labels': self.loss_att_labels,
             'sub_obj_boxes': self.loss_sub_obj_boxes,
-            'obj_att_boxes':self.loss_att_obj_boxes,
         }
+
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num, dtype, **kwargs)
 
     def forward(self, outputs, targets):
         outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs'}
         dtype=outputs['type']
+        
         # Retrieve the matching between the outputs of the last layer and the targets
-        indices = self.matcher(outputs_without_aux, targets, dtype)
+        
+        if dtype == 'att':
+            indices = None
+        else:
+            indices = self.matcher(outputs_without_aux, targets, dtype)
 
         num_att_or_inter = sum(len(t['obj_labels']) for t in targets) if outputs['type'] =='hoi' else sum(len(t['labels']) for t in targets)
         num_att_or_inter = torch.as_tensor([num_att_or_inter], dtype=torch.float, device=next(iter(outputs.values())).device)
@@ -394,12 +632,18 @@ class SetCriterionHOI(nn.Module):
         # Compute all the requested losses
         losses = {}
         for loss in self.losses:
+            #import pdb; pdb.set_trace()
             losses.update(self.get_loss(loss, outputs, targets, indices, num_att_or_inter,dtype))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
+        
+        #if dtype=='hoi':
         if 'aux_outputs' in outputs:
             for i, aux_outputs in enumerate(outputs['aux_outputs']):
-                indices = self.matcher(aux_outputs, targets, dtype)
+                if dtype == 'hoi':
+                    indices = self.matcher(aux_outputs, targets, dtype)
+                else:
+                    indices = None
                 for loss in self.losses:
                     kwargs = {}
                     if loss == 'obj_labels':
@@ -425,8 +669,6 @@ class PostProcessHOI_ATT(nn.Module):
                                                                             outputs['pred_logits'], \
                                                                             outputs['pred_sub_boxes'], \
                                                                             outputs['pred_obj_boxes']
-
-
             assert len(out_obj_logits) == len(target_sizes)
             assert target_sizes.shape[1] == 2
             if outputs['dataset']=='vcoco':
@@ -450,7 +692,6 @@ class PostProcessHOI_ATT(nn.Module):
                 l = torch.cat((sl, ol))
                 b = torch.cat((sb, ob))
                 results.append({'labels': l.to('cpu'), 'boxes': b.to('cpu')})
-
                 vs = vs * os.unsqueeze(1)
 
                 ids = torch.arange(b.shape[0])
@@ -461,7 +702,6 @@ class PostProcessHOI_ATT(nn.Module):
             out_obj_logits, out_att_logits,out_obj_boxes = outputs['pred_obj_logits'], \
                                                                             outputs['pred_logits'], \
                                                                             outputs['pred_obj_boxes']
-
 
             assert len(out_obj_logits) == len(target_sizes)
             assert target_sizes.shape[1] == 2

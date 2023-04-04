@@ -3,6 +3,7 @@ import datetime
 import json
 import random
 import time
+import os
 from pathlib import Path
 
 import numpy as np
@@ -64,7 +65,7 @@ def get_args_parser():
     # HOI
     parser.add_argument('--hoi', action='store_true',
                         help="Train for HOI if the flag is provided")
-    parser.add_argument('--num_obj_classes', type=int, default=80,
+    parser.add_argument('--num_obj_classes', type=int, default=81,
                         help="Number of object classes")
     parser.add_argument('--num_verb_classes', type=int, default=117,
                         help="Number of verb classes")
@@ -74,6 +75,17 @@ def get_args_parser():
     parser.add_argument('--loss_type', type=str, default='focal',
                         help='Loss type for the verb classification')
                         
+    #vaw evaluation
+    parser.add_argument('--vaw_gts', default='data/vaw/annotations/test_orig_vaw.npy')
+    parser.add_argument('--fpath_attribute_index', type=str,
+                        default='data/vaw/annotations/attribute_index.json') #o
+    parser.add_argument('--fpath_attribute_types', type=str,
+                        default='data/vaw/annotations/attribute_types.json') #o
+    parser.add_argument('--fpath_attribute_parent_types', type=str,
+                        default='data/vaw/annotations/attribute_parent_types.json') #o
+    parser.add_argument('--fpath_head_tail', type=str,
+                        default='data/vaw/annotations/head_tail.json') #o
+
 
     # Loss
     parser.add_argument('--no_aux_loss', dest='aux_loss', action='store_false',
@@ -111,6 +123,8 @@ def get_args_parser():
                     help="Action coefficient in the matching cost")
 
     # * ATT Detection                       
+    parser.add_argument('--num_att_classes', default=620, type=int,
+                        help="Number of decoding layers in HOI transformer")
     parser.add_argument('--att_enc_layers', default=1, type=int,
                         help="Number of decoding layers in HOI transformer")
     parser.add_argument('--att_dec_layers', default=1, type=int,
@@ -163,11 +177,35 @@ def get_args_parser():
                         help='number of distributed processes')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
 
+    #backbone roi_align flag
+    parser.add_argument('--br', action='store_true')
+
+    #freeze transformer (pretrained hoi parmeters)
+    parser.add_argument('--freeze_hoi', action='store_true')
+
+    #fc version
+    parser.add_argument('--fc_version', action='store_true')
+
     # logging
     parser.add_argument('--wandb', action='store_true')
     parser.add_argument('--project_name', default='qpic')
     parser.add_argument('--group_name', default='Neubla')
     parser.add_argument('--run_name', default='train_num_1')
+
+    #for video vis
+    #parser.add_argument('--output_dir', default='output_video/example2.mp4',help='output path')
+    parser.add_argument('--show_vid', action='store_true',help='check video inference')
+    parser.add_argument('--video_file', default='video/example2.mp4',help='video source')
+    parser.add_argument('--checkpoint', default='checkpoints/hoi/checkpoint.pth',help='model checkpoint path')
+    parser.add_argument('--inf_type', default='vcoco',help='inference type')
+    parser.add_argument('--top_k', default=1,type=int,help='top_k value')
+    parser.add_argument('--threshold', default=0.3,type=float,help='threshold value')
+    parser.add_argument('--fps', default=30,type=int,help='fps')
+    parser.add_argument('--all', action='store_true',help='check hoi+attribute inference')
+    parser.add_argument('--color', action='store_true',help='only color inference for vaw')
+    parser.add_argument('--webcam', default='', type=str)
+    parser.add_argument('--vis_demo',action='store_true')
+    parser.add_argument('--iou_threshold', default=0.9,type=float,help='iou threshold value')
     return parser
 
 
@@ -197,21 +235,20 @@ def main(args):
             
             args.num_att_classes = dataset_train[-1].num_attributes() 
 
-        if args.distributed:
-            
+        if args.distributed:            
             sampler_train = [torch.utils.data.DistributedSampler(d) for d in dataset_train]
             sampler_val = [torch.utils.data.DistributedSampler(dv,shuffle=False) for dv in dataset_val]
+
         else:
             sampler_train = [torch.utils.data.RandomSampler(d)for d in dataset_train]
             sampler_val = [torch.utils.data.SequentialSampler(dv) for dv in dataset_val]
-        
+
         batch_sampler_train = ComboBatchSampler(
             sampler_train, args.batch_size, drop_last=True)
-        
+
         data_loader_train = DataLoader(CombinationDataset(dataset_train),
                                         batch_sampler = batch_sampler_train, collate_fn=utils.collate_fn, num_workers=args.num_workers)
 
-        
         data_loader_val = [DataLoader(dv, args.batch_size, sampler=sv,
                                     drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers) for dv,sv in zip(dataset_val,sampler_val)]
        
@@ -237,11 +274,15 @@ def main(args):
                                     collate_fn=utils.collate_fn, num_workers=args.num_workers)
         data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val,
                                     drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers)
-    # import pdb;pdb.set_trace()
+
     model, criterion, postprocessors = build_model(args)
     model.to(device)
 
     model_without_ddp = model
+    
+    # if args.freeze_hoi:
+    #     import pdb; pdb.set_trace()
+
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
@@ -284,6 +325,7 @@ def main(args):
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             args.start_epoch = checkpoint['epoch'] + 1
+
     elif args.pretrained:
         checkpoint = torch.load(args.pretrained, map_location='cpu')
         model_without_ddp.load_state_dict(checkpoint['model'],strict=False)
@@ -293,7 +335,12 @@ def main(args):
             if args.mtl:
                 for dlv in data_loader_val:
                     test_stats,dataset_name = evaluate_hoi_att(args.dataset_file, model, postprocessors, dlv, args.subject_category_id, device, args)
+                    log_stats = {**{f'test_{k}': v for k, v in test_stats.items()}}
                     if 'v-coco' in dataset_name:
+                        if args.output_dir and utils.is_main_process():
+                            with (output_dir / "log.txt").open("a") as f:
+                                f.write(json.dumps(log_stats) + "\n")
+
                         if utils.get_rank() == 0 and args.wandb:
                     
                             wandb.log({
@@ -301,7 +348,12 @@ def main(args):
                                 'mAP_thesis':test_stats['mAP_thesis']
                             })
                         performance=test_stats['mAP_thesis']
+
                     elif 'hico' in dataset_name:
+                        if args.output_dir and utils.is_main_process():
+                            with (output_dir / "log.txt").open("a") as f:
+                                f.write(json.dumps(log_stats) + "\n")
+
                         if utils.get_rank() == 0 and args.wandb:
                             wandb.log({
                                 'mAP': test_stats['mAP'],
@@ -310,16 +362,33 @@ def main(args):
                                 'mean max recall':test_stats['mean max recall']
                             })
                         performance=test_stats['mAP']
+
                     elif 'vaw' in dataset_name:
+                        #CATEGORIES = ['all', 'head', 'medium', 'tail'] 
+                        if args.output_dir and utils.is_main_process():
+                            with (output_dir / "log.txt").open("a") as f:
+                                f.write(json.dumps(log_stats) + "\n")
+
                         if utils.get_rank() == 0 and args.wandb:
                             wandb.log({
-                                'mAP': test_stats['mAP'],
-                                'mAP rare': test_stats['mAP rare'],
-                                'mAP non-rare':test_stats['mAP non-rare'],
-                                'mean max recall':test_stats['mean max recall']
+                                'vaw_mAP_all': test_stats['mAP_all'],
+                                'vaw_mAP_head': test_stats['mAP_head'],
+                                'vaw_mAP_medium':test_stats['mAP_medium'],
+                                'vaw_mAP_tail':test_stats['mAP_tail']
                             })
-                        performance=test_stats['mAP']
-                    coco_evaluator = None
+
+
+
+                    # elif 'vaw' in dataset_name:
+                    #     if utils.get_rank() == 0 and args.wandb:
+                    #         wandb.log({
+                    #             'mAP': test_stats['mAP'],
+                    #             'mAP rare': test_stats['mAP rare'],
+                    #             'mAP non-rare':test_stats['mAP non-rare'],
+                    #             'mean max recall':test_stats['mean max recall']
+                    #         })
+                    #     performance=test_stats['mAP']
+                    # coco_evaluator = None
             else:
                 test_stats,dataset_name = evaluate_hoi_att(args.dataset_file, model, postprocessors, data_loader_val, args.subject_category_id, device, args)
                 if 'v-coco' in dataset_name:
@@ -358,6 +427,24 @@ def main(args):
                 utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
             return
 
+
+    if args.freeze_hoi:
+        print('freeze hoi parameters')
+        for name, param in model.named_parameters():
+            if 'attribute' not in name:
+                param.requires_grad = False
+
+        # trainable_parameters = []
+        # for name, param in model.named_parameters():
+        #     if param.requires_grad:
+        #         trainable_parameters.append(name)
+        
+        # print(trainable_parameters)
+        # exit()
+
+    if args.wandb:
+        os.environ['WANDB_API_KEY'] = '3f007fbea1ce3a73739cf5da719f6d4fe7c91960'
+
     # add argparse
     if args.wandb and utils.get_rank() == 0:
         wandb.init(
@@ -368,20 +455,24 @@ def main(args):
         )
         wandb.watch(model)
 
+
+
     print("Start training")
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
-        if args.distributed:
-            for st in sampler_train:
-                st.set_epoch(epoch)
+        # if args.distributed:
+            # for st in sampler_train:
+            #     st.set_epoch(epoch)
+
         train_stats = train_one_epoch(
             model, criterion, data_loader_train, optimizer, device, epoch,
             args.clip_max_norm,args.wandb, args)
         lr_scheduler.step()
+
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']
             # extra checkpoint before LR drop and every 100 epochs
-            if (epoch + 1) % args.lr_drop == 0 or (epoch + 1) % 100 == 0:
+            if (epoch + 1) % 10 == 0:
                 checkpoint_paths.append(output_dir / f'checkpoint{epoch:04}.pth')
             for checkpoint_path in checkpoint_paths:
                 utils.save_on_master({
@@ -391,37 +482,39 @@ def main(args):
                     'epoch': epoch,
                     'args': args,
                 }, checkpoint_path)
-        if (epoch+1)%5==0:
+
+
+        if (epoch+1)%1==0:
             if args.hoi or args.att_det or args.mtl:
                 if args.mtl:
                     for dlv in data_loader_val:
-                        test_stats,dataset_name = evaluate_hoi_att(args.dataset_file, model, postprocessors, dlv, args.subject_category_id, device, args)
-                        if 'v-coco' in dataset_name:
-                            if utils.get_rank() == 0 and args.wandb:
-                        
-                                wandb.log({
-                                    'mAP_all': test_stats['mAP_all'],
-                                    'mAP_thesis':test_stats['mAP_thesis']
-                                })
-                            performance=test_stats['mAP_thesis']
-                        elif 'hico' in dataset_name:
-                            if utils.get_rank() == 0 and args.wandb:
-                                wandb.log({
-                                    'mAP': test_stats['mAP'],
-                                    'mAP rare': test_stats['mAP rare'],
-                                    'mAP non-rare':test_stats['mAP non-rare'],
-                                    'mean max recall':test_stats['mean max recall']
-                                })
-                            performance=test_stats['mAP']
-                        elif 'vaw' in dataset_name:
-                            if utils.get_rank() == 0 and args.wandb:
-                                wandb.log({
-                                    'mAP': test_stats['mAP'],
-                                    'mAP rare': test_stats['mAP rare'],
-                                    'mAP non-rare':test_stats['mAP non-rare'],
-                                    'mean max recall':test_stats['mean max recall']
-                                })
-                            performance=test_stats['mAP']
+                        if 'v-coco' in os.fspath(dlv.dataset.img_folder) or 'hico' in os.fspath(dlv.dataset.img_folder):
+                            test_stats,dataset_name = evaluate_hoi_att(args.dataset_file, model, postprocessors, dlv, args.subject_category_id, device, args)
+                            if 'v-coco' in dataset_name:
+                                if utils.get_rank() == 0 and args.wandb:                        
+                                    wandb.log({
+                                        'mAP_all': test_stats['mAP_all'],
+                                        'mAP_thesis':test_stats['mAP_thesis']
+                                    })
+                                performance=test_stats['mAP_thesis']
+                            elif 'hico' in dataset_name:
+                                if utils.get_rank() == 0 and args.wandb:
+                                    wandb.log({
+                                        'mAP': test_stats['mAP'],
+                                        'mAP rare': test_stats['mAP rare'],
+                                        'mAP non-rare':test_stats['mAP non-rare'],
+                                        'mean max recall':test_stats['mean max recall']
+                                    })
+                                performance=test_stats['mAP']
+                            elif 'vaw' in dataset_name:
+                                if utils.get_rank() == 0 and args.wandb:
+                                    wandb.log({
+                                        'mAP': test_stats['mAP'],
+                                        'mAP rare': test_stats['mAP rare'],
+                                        'mAP non-rare':test_stats['mAP non-rare'],
+                                        'mean max recall':test_stats['mean max recall']
+                                    })
+                                performance=test_stats['mAP']
                         coco_evaluator = None
                 else:
                     test_stats,dataset_name = evaluate_hoi_att(args.dataset_file, model, postprocessors, data_loader_val, args.subject_category_id, device, args)
@@ -457,25 +550,25 @@ def main(args):
                     model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir
                 )
 
-            log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                        **{f'test_{k}': v for k, v in test_stats.items()},
-                        'epoch': epoch,
-                        'n_parameters': n_parameters}
+            # log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
+            #             **{f'test_{k}': v for k, v in test_stats.items()},
+            #             'epoch': epoch,
+            #             'n_parameters': n_parameters}
 
-            if args.output_dir and utils.is_main_process():
-                with (output_dir / "log.txt").open("a") as f:
-                    f.write(json.dumps(log_stats) + "\n")
+            # if args.output_dir and utils.is_main_process():
+            #     with (output_dir / "log.txt").open("a") as f:
+            #         f.write(json.dumps(log_stats) + "\n")
 
-                # for evaluation logs
-                if coco_evaluator is not None:
-                    (output_dir / 'eval').mkdir(exist_ok=True)
-                    if "bbox" in coco_evaluator.coco_eval:
-                        filenames = ['latest.pth']
-                        if epoch % 50 == 0:
-                            filenames.append(f'{epoch:03}.pth')
-                        for name in filenames:
-                            torch.save(coco_evaluator.coco_eval["bbox"].eval,
-                                    output_dir / "eval" / name)
+            #     # for evaluation logs
+            #     if coco_evaluator is not None:
+            #         (output_dir / 'eval').mkdir(exist_ok=True)
+            #         if "bbox" in coco_evaluator.coco_eval:
+            #             filenames = ['latest.pth']
+            #             if epoch % 50 == 0:
+            #                 filenames.append(f'{epoch:03}.pth')
+            #             for name in filenames:
+            #                 torch.save(coco_evaluator.coco_eval["bbox"].eval,
+            #                         output_dir / "eval" / name)
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))

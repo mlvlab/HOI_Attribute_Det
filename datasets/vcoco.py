@@ -21,9 +21,7 @@ class VCOCO(torch.utils.data.Dataset):
         with open(anno_file, 'r') as f:
             self.annotations = json.load(f)
         self._transforms = transforms
-
         self.num_queries = num_queries
-
         self._valid_obj_ids = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13,
                                14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
                                24, 25, 27, 28, 31, 32, 33, 34, 35, 36,

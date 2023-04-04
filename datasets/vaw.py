@@ -226,14 +226,15 @@ def build(image_set, args):
     root = Path('data/vaw')
     assert root.exists(), f'provided HOI path {root} does not exist'
     PATHS = {
-        'train': (root / 'images' , root / 'annotations' / 'vaw_coco_train.json'),
-        'val': (root / 'images' , root / 'annotations' / 'vaw_coco_test.json'),
-        'test': (root / 'images' , root / 'annotations' / 'vaw_coco_test.json')
+        'train': (root / 'images' , root / 'annotations' / 'vaw_orig_train.json'),
+        'val': (root / 'images' , root / 'annotations' / 'vaw_orig_test.json'),
+        'test': (root / 'images' , root / 'annotations' / 'vaw_orig_test.json')
     }
+
     # CORRECT_MAT_PATH = root / 'annotations' / 'corre_hico.npy'
-    attribute_freq = root / 'annotations' / 'vaw_coco_train_cat_info.json'
-    attribute_index = root / 'annotations' / 'attribute_index.json'
-    
+    attribute_freq = root / 'annotations' / 'vaw_orig_train_cat_info.json'
+    attribute_index = root / 'annotations' / 'attribute_index.json'    
+
     img_folder, anno_file = PATHS[image_set]
     dataset = VAWDetection(image_set, img_folder, anno_file,attribute_index, transforms=make_vaw_transforms(image_set),
                             num_queries=args.num_queries)

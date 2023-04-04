@@ -52,80 +52,17 @@ class VAWEvaluator():
                 self.sum_gts[double] += 1 # #defaultdict(<function VAWEvaluator.__init__.<locals>.<lambda> at 0x7efc5650a9d0>,{412: 1, 232: 1, 259: 1})
 
         for i, img_preds in enumerate(preds):
-            import pdb; pdb.set_trace()
-            #len(preds) : 3452
-            #img_preds.keys() : 'labels', 'boxes', 'attr_scores', 'obj_ids'
-            #len(img_preds['labels']),len(img_preds['boxes']),len(img_preds['attr_scores']),len(img_preds['obj_ids']) : 100
+
             img_preds = {k: v.to('cpu').numpy() for k, v in img_preds.items() if k != 'att_recognition_time'}
-
-            #len(bboxes) : 100
             bboxes = [{'bbox': bbox, 'category_id': label} for bbox, label in zip(img_preds['boxes'], img_preds['labels'])]
-
-            #attr_scores.shape : (100,620)
-            '''
-            array([[0.02596947, 0.0583656 , 0.03330475, ..., 0.03529264, 0.48919117,
-                0.6836143 ],
-            [0.04019799, 0.043267  , 0.03159507, ..., 0.04269576, 0.44529814,
-                0.6828197 ],
-            [0.03269851, 0.05208412, 0.03599585, ..., 0.04921223, 0.49292317,
-                0.7622846 ],
-            ...,
-            [0.04096896, 0.05102941, 0.03148905, ..., 0.04965477, 0.53773934,
-                0.6137796 ],
-            [0.03571606, 0.05448545, 0.03412009, ..., 0.04537631, 0.5010768 ,
-                0.6937183 ],
-            [0.03066489, 0.04988421, 0.03673794, ..., 0.03909696, 0.5097801 ,
-                0.62213   ]], dtype=float32)
-            '''
             attr_scores = img_preds['attr_scores']
-
-            #attr_label.shape : (100,620)
-            '''
-            array([[  0,   1,   2, ..., 617, 618, 619],
-            [  0,   1,   2, ..., 617, 618, 619],
-            [  0,   1,   2, ..., 617, 618, 619],
-            ...,
-            [  0,   1,   2, ..., 617, 618, 619],
-            [  0,   1,   2, ..., 617, 618, 619],
-            [  0,   1,   2, ..., 617, 618, 619]])
-            '''
-            attr_labels = np.tile(np.arange(attr_scores.shape[1]), (attr_scores.shape[0], 1))
-            
-            #object_ids.shape : (100, 620)
-            '''
-            array([[ 0,  0,  0, ...,  0,  0,  0],
-            [ 1,  1,  1, ...,  1,  1,  1],
-            [ 2,  2,  2, ...,  2,  2,  2],
-            ...,
-            [97, 97, 97, ..., 97, 97, 97],
-            [98, 98, 98, ..., 98, 98, 98],
-            [99, 99, 99, ..., 99, 99, 99]])
-            '''
+            attr_labels = np.tile(np.arange(attr_scores.shape[1]), (attr_scores.shape[0], 1))            
             object_ids = np.tile(img_preds['obj_ids'], (attr_scores.shape[1], 1)).T
-
-            #(62000,)
-            attr_scores = attr_scores.ravel()
-            
-            #(62000,)
-            attr_labels = attr_labels.ravel()
-            
-            #(62000,)
+            attr_scores = attr_scores.ravel()            
+            attr_labels = attr_labels.ravel()            
             object_ids = object_ids.ravel()
-
-            #valid_masks.shape : (620,)
-            #valid_masks[attr_labels].shape : (62000,)
-            #array([1., 1., 1., ..., 1., 0., 0.])
-            #masks.shape : (62000,)
             masks = valid_masks[attr_labels]
-
-            #attr_scores.shape : (62000,)
-            '''
-            array([0.02596947, 0.0583656 , 0.03330475, ..., 0.03909696, 0.        ,
-              0.        ], dtype=float32)
-            '''
             attr_scores *= masks
-
-            #len(attrs) : 62000
             attrs = [{'object_id': object_id, 'category_id': category_id, 'score': score} for
                     object_id, category_id, score in zip(object_ids, attr_labels, attr_scores)]
             

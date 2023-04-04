@@ -13,3 +13,5 @@ checkbbox.py
 configs/
 datasets/
 evaluations/
+test_results/
+wandb/
