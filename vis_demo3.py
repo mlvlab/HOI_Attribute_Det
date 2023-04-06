@@ -518,8 +518,8 @@ class Demo():
                     sub_bbox = preds[0]['boxes'][sub_id] 
                     obj_bbox = preds[0]['boxes'][obj_id] 
                     
-                    sub_att_outputs = self.inference_for_vid(model, frame, sub_bbox, 'vaw', args) #torch.Size([1, 620])
-                    obj_att_outputs = self.inference_for_vid(model, frame, obj_bbox, 'vaw', args) #torch.Size([1, 620])
+                    sub_att_outputs = self.inference_for_vid(model, frame, sub_bbox, 'vaw', args) 
+                    obj_att_outputs = self.inference_for_vid(model, frame, obj_bbox, 'vaw', args) 
                     
                     sub_att_values, sub_att_indices = torch.topk(sub_att_outputs, k=5, dim=-1)
                     obj_att_values, obj_att_indices = torch.topk(obj_att_outputs, k=5, dim=-1)

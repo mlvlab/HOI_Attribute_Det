@@ -58,7 +58,6 @@ class DETRHOI(nn.Module):
                 if 'hico' in args.mtl_data or 'vcoco' in args.mtl_data:
                     self.sub_bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)                
                     if 'vcoco' in args.mtl_data:
-                        #import pdb; pdb.set_trace()
                         self.vcoco_verb_class_embed = nn.Linear(hidden_dim, num_classes['vcoco'])
                     if 'hico' in args.mtl_data:
                         self.hico_verb_class_embed = nn.Linear(hidden_dim, num_classes['hico'])
@@ -89,8 +88,7 @@ class DETRHOI(nn.Module):
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
         self.backbone = backbone
         self.aux_loss = aux_loss
-        if args.show_vid:
-            self.show_vid = args.show_vid
+        self.show_vid = args.show_vid
 
 
     def forward(self, samples: NestedTensor, targets=None, dtype: str='', dataset:str='',args=None, eval=None):
@@ -100,12 +98,12 @@ class DETRHOI(nn.Module):
         features, pos = self.backbone(samples)
         src, mask = features[-1].decompose()        
         assert mask is not None
-        #encoder_src = self.input_proj(src)
-        #hs = self.transformer(encoder_src, mask, self.query_embed.weight, pos[-1])[0]
 
         if dtype=='att':           
-            if not self.training:   
-                if self.show_vid: #for in the wild video inference
+            if not self.training:
+
+                #for video inference
+                if self.show_vid: 
                     box_tensors = torch.Tensor([int(0)] + targets.tolist()).unsqueeze(0) # [1,5] : frame 한 장씩
                     encoder_src = self.input_proj(src)
                     B,C,H,W = encoder_src.shape 
@@ -309,8 +307,8 @@ class DETRHOI(nn.Module):
             if dtype=='hoi':
                 out['aux_outputs'] = self._set_aux_loss_hoi(outputs_obj_class, outputs_class,
                                                     outputs_sub_coord, outputs_obj_coord)
-            # elif dtype=='att':
-            #     out['aux_outputs'] = self._set_aux_loss_att(outputs_class)
+            elif dtype=='att':
+                out['aux_outputs'] = self._set_aux_loss_att(outputs_class)
 
         #import pdb; pdb.set_trace()
         return out
@@ -332,10 +330,13 @@ class DETRHOI(nn.Module):
         return [{'pred_obj_logits': a, 'pred_logits': b, 'pred_sub_boxes': c, 'pred_obj_boxes': d}
                 for a, b, c, d in zip(outputs_obj_class[:-1], outputs_class[:-1],
                                       outputs_sub_coord[:-1], outputs_obj_coord[:-1])]
-    # @torch.jit.unused
+    @torch.jit.unused
     def _set_aux_loss_att(self, outputs_class):
-        return [{'pred_logits': a}
-                for a in outputs_class[:-1]]
+        # return [{'pred_logits': a}
+        #         for a in outputs_class[:-1]]
+        return [{'pred_obj_logits': a, 'pred_logits': b, 'pred_sub_boxes': c, 'pred_obj_boxes': d}
+                for a, b, c, d in zip(outputs_class[:-1], outputs_class[:-1],
+                                      outputs_class[:-1], outputs_class[:-1])]
 
 
 class MLP(nn.Module):
@@ -637,22 +638,33 @@ class SetCriterionHOI(nn.Module):
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         
-        #if dtype=='hoi':
         if 'aux_outputs' in outputs:
             for i, aux_outputs in enumerate(outputs['aux_outputs']):
-                if dtype == 'hoi':
+                if dtype == 'hoi':    
                     indices = self.matcher(aux_outputs, targets, dtype)
-                else:
-                    indices = None
-                for loss in self.losses:
-                    kwargs = {}
-                    if loss == 'obj_labels':
-                        # Logging is enabled only for the last layer
-                        kwargs = {'log': False}
-                    l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_att_or_inter,dtype, **kwargs)
-                    l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
-                    losses.update(l_dict)
+                    for loss in ['obj_labels', 'verb_labels', 'sub_obj_boxes', 'obj_cardinality']:
+                        kwargs = {}
+                        if loss == 'obj_labels':
+                            # Logging is enabled only for the last layer
+                            kwargs = {'log': False}
+                        l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_att_or_inter,dtype, **kwargs)
+                        l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
+                        losses.update(l_dict)
 
+                #dummy value for att
+                elif dtype == 'att':
+                    if i>=5:
+                        break
+                    indices = None                
+                    for loss in ['obj_labels', 'verb_labels', 'sub_obj_boxes', 'obj_cardinality']:
+                        kwargs = {}
+                        if loss == 'obj_labels':
+                            # Logging is enabled only for the last layer
+                            kwargs = {'log': False}
+                        l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_att_or_inter,dtype, **kwargs)
+                        l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
+                        losses.update(l_dict)
+                                                
         return losses
 
 

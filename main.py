@@ -538,10 +538,10 @@ def main(args):
                     elif 'vaw' in dataset_name:
                         if utils.get_rank() == 0 and args.wandb:
                             wandb.log({
-                                'mAP': test_stats['mAP'],
-                                # 'mAP rare': test_stats['mAP rare'],
-                                # 'mAP non-rare':test_stats['mAP non-rare'],
-                                'mean max recall':test_stats['mean max recall']
+                                'vaw_mAP_all': test_stats['mAP_all'],
+                                'vaw_mAP_head': test_stats['mAP_head'],
+                                'vaw_mAP_medium':test_stats['mAP_medium'],
+                                'vaw_mAP_tail':test_stats['mAP_tail']
                             })
                         performance=test_stats['mAP']
                     coco_evaluator = None

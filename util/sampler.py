@@ -83,7 +83,6 @@ class ComboBatchSampler(torch.utils.data.sampler.Sampler):
         random.shuffle(idxs)
         self.sampler_idxs = list(np.array(self.sampler_idxs, dtype=object)[idxs])
         self.dataset_idxs = list(np.array(self.dataset_idxs, dtype=object)[idxs])
-        import pdb; pdb.set_trace()
         # tmp = []
         # for i,sampler in enumerate(self.samplers):
         #     if len(sampler) % batch_size == 0:
