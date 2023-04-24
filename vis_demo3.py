@@ -482,7 +482,6 @@ class Demo():
                 break                       
 
             if 'vcoco' in self.inf_type:
-
                 #hoi predictions
                 vcoco_outputs = self.inference_for_vid(model, frame, None, 'vcoco', args)
                 results_vcoco = postprocessors(vcoco_outputs, orig_size)

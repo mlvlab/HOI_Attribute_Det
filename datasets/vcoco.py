@@ -166,6 +166,11 @@ def make_vcoco_transforms(image_set):
             normalize,
         ])
 
+    if image_set == 'vis':
+        return T.Compose([
+            normalize,
+        ])
+
     raise ValueError(f'unknown {image_set}')
 
 

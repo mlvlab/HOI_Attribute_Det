@@ -390,6 +390,7 @@ def build(args):
             weight_dict['loss_obj_giou'] = args.giou_loss_coef
         if 'vaw' in args.mtl_data:
             weight_dict['loss_att_ce'] = args.att_loss_coef
+            weight_dict['loss_mask_ce'] = args.mask_loss_coef
             weight_dict['loss_att_obj_ce'] = args.obj_loss_coef
             weight_dict['loss_att_obj_bbox'] = args.bbox_loss_coef
             weight_dict['loss_att_obj_giou'] = args.giou_loss_coef
@@ -403,6 +404,7 @@ def build(args):
             weight_dict['loss_obj_giou'] = args.giou_loss_coef
         elif args.att_det:
             weight_dict['loss_att_ce'] = args.att_loss_coef
+            weight_dict['loss_mask_ce'] = args.mask_loss_coef
             weight_dict['loss_obj_ce'] = args.obj_loss_coef
             weight_dict['loss_obj_bbox'] = args.bbox_loss_coef
             weight_dict['loss_obj_giou'] = args.giou_loss_coef
@@ -433,8 +435,8 @@ def build(args):
                 num_classes.update({'vcoco':args.num_vcoco_verb_classes})
         if 'vaw' in args.mtl_data:
             losses.extend(['att_labels'])
-            # if args.update_obj_att:
-            #     losses.extend(['att_obj_labels','att_obj_cardinality','obj_att_boxes'])
+            if args.masks and args.predict_mask:
+                losses.extend(['mask_labels'])
             if 'vaw' in args.mtl_data:
                 num_classes.update({'vaw':args.num_att_classes})
         criterion = SetCriterionHOI(args.num_obj_classes, args.num_queries, num_classes, matcher=matcher,

@@ -15,3 +15,8 @@ datasets/
 evaluations/
 test_results/
 wandb/
+numpy_sample/
+feature_vis.py
+samples/
+tmp.py
+

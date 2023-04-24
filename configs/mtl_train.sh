@@ -12,8 +12,8 @@ python -u main.py \
     --mtl \
     --batch_size 8 \
     --update_obj_att \
-    --epochs 90 \
-    --lr_drop 60 \
+    --epochs 30 \
+    --lr_drop 20 \
     --dataset_file vaw \
     --data_path data/vaw \
     --num_obj_att_classes 80 \

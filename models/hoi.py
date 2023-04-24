@@ -3,6 +3,8 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 from scipy.optimize import linear_sum_assignment
+from skimage.draw import polygon2mask
+from pycocotools import mask as coco_mask
 
 import torch
 from torch import nn
@@ -16,7 +18,9 @@ from util.fed import load_class_freq, get_fed_loss_inds
 from .layers.roi_align import ROIAlign
 from typing import List
 import numpy as np
+import cv2
 
+from datasets.coco import convert_coco_poly_to_mask
 
 class DETRHOI(nn.Module):
 
@@ -42,15 +46,13 @@ class DETRHOI(nn.Module):
                     else:
                         self.attribute_input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)                
                         self.attribute_class_embed = nn.Linear(hidden_dim, num_classes['att'])
-                        self.attribute_input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)                
                         self.attribute_conv = nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, stride=1, padding=1)
                 else:
                     self.attribute_input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)                
                     self.attribute_class_embed = nn.Linear(hidden_dim, num_classes['att'])
-                    self.attribute_input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)                
                     self.attribute_conv = nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, stride=1, padding=1)
 
-                self.attribute_roi_align = ROIAlign(output_size=(7,7), spatial_scale=1.0, sampling_ratio=-1, aligned=True)
+                self.attribute_roi_align = ROIAlign(output_size=(2,2), spatial_scale=1.0, sampling_ratio=-1, aligned=True)
                 self.attribute_avgpool = nn.AdaptiveAvgPool2d((1, 1))
 
 
@@ -69,7 +71,7 @@ class DETRHOI(nn.Module):
                     if args.br:
                         self.attribute_input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
                     self.attribute_conv = nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, stride=1, padding=1)
-                    self.attribute_roi_align = ROIAlign(output_size=(7,7), spatial_scale=1.0, sampling_ratio=-1, aligned=True)
+                    self.attribute_roi_align = ROIAlign(output_size=(7,7), spatial_scale=1.0, sampling_ratio=0, aligned=True)
                     self.attribute_class_embed = nn.Linear(hidden_dim, num_classes['att'])
                     self.attribute_avgpool = nn.AdaptiveAvgPool2d((1, 1))
 
@@ -89,22 +91,48 @@ class DETRHOI(nn.Module):
         self.backbone = backbone
         self.aux_loss = aux_loss
         self.show_vid = args.show_vid
+        if args.object_embedding:
+            self.obj_em_relu = F.relu
+            self.obj_em_w1 = nn.Linear(1024,256)
+            #self.obj_em_w2 = nn.Linear(512,256)
+            
 
+        if args.predict_mask:
+            n_class = 1 #binary classifier
+            self.relu = F.relu
+            self.deconv1 = nn.ConvTranspose2d(2048, 1024, kernel_size=3, stride=2, padding=1, dilation=1, output_padding=1)
+            self.bn1     = nn.BatchNorm2d(1024)
+            self.deconv2 = nn.ConvTranspose2d(1024, 512, kernel_size=3, stride=2, padding=1, dilation=1, output_padding=1)
+            self.bn2     = nn.BatchNorm2d(512)
+            self.deconv3 = nn.ConvTranspose2d(512, 256, kernel_size=3, stride=2, padding=1, dilation=1, output_padding=1)
+            self.bn3     = nn.BatchNorm2d(256)
+            # self.deconv4 = nn.ConvTranspose2d(256, 128, kernel_size=3, stride=2, padding=1, dilation=1, output_padding=1)
+            # self.bn4     = nn.BatchNorm2d(128)
+            # self.deconv5 = nn.ConvTranspose2d(128, 64, kernel_size=3, stride=2, padding=1, dilation=1, output_padding=1)
+            # self.bn5     = nn.BatchNorm2d(64)
+            # self.deconv6 = nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, dilation=1, output_padding=1)
+            # self.bn6     = nn.BatchNorm2d(32)
+            self.mask_classifier = nn.Conv2d(256, n_class, kernel_size=1)
 
     def forward(self, samples: NestedTensor, targets=None, dtype: str='', dataset:str='',args=None, eval=None):
         if not isinstance(samples, NestedTensor):
             samples = nested_tensor_from_tensor_list(samples)
 
-        features, pos = self.backbone(samples)
+        features, pos = self.backbone(samples) #args.masks True for mask prediction
         src, mask = features[-1].decompose()        
         assert mask is not None
 
+        #feature shape excluding padding size (H,W)
+        masking_shape = [] 
+        for img_mask in mask:
+            max_h, max_w = np.where(img_mask.cpu().numpy() == False)[0].max(), np.where(img_mask.cpu().numpy() == False)[1].max()
+            masking_shape.append(img_mask[:max_h,:max_w].shape)
+
         if dtype=='att':           
             if not self.training:
-
                 #for video inference
                 if self.show_vid: 
-                    box_tensors = torch.Tensor([int(0)] + targets.tolist()).unsqueeze(0) # [1,5] : frame 한 장씩
+                    box_tensors = torch.Tensor([int(0)] + targets.tolist()).unsqueeze(0) # [1,5] : 1 frame 
                     encoder_src = self.input_proj(src)
                     B,C,H,W = encoder_src.shape 
                     encoder_src = encoder_src.flatten(2).permute(2, 0, 1)
@@ -115,7 +143,6 @@ class DETRHOI(nn.Module):
                     encoder_output = encoder_output.view([B,C,H,W]) 
                     feature_H, feature_W = encoder_output.shape[2], encoder_output.shape[3]
                 
-                    #normalize box size                    
                     box_tensors[...,1], box_tensors[...,3] = feature_W*box_tensors[...,1]/samples.tensors.shape[-1], feature_W*box_tensors[...,3]/samples.tensors.shape[-1] 
                     box_tensors[...,2], box_tensors[...,4] = feature_H*box_tensors[...,2]/samples.tensors.shape[-2], feature_H*box_tensors[...,4]/samples.tensors.shape[-2]
                                         
@@ -125,151 +152,317 @@ class DETRHOI(nn.Module):
                     x = torch.flatten(x, 1)
                     outputs_class = self.attribute_class_embed(x)
                     return outputs_class.sigmoid()
-
-
+            
                 object_boxes = torch.cat([torch.stack([target['boxes'][...,0]/target['orig_size'][1],target['boxes'][...,1]/target['orig_size'][0],target['boxes'][...,2]/target['orig_size'][1],target['boxes'][...,3]/target['orig_size'][0]],axis=1) for target in targets])
                 batch_index = torch.cat([torch.Tensor([int(i)]) for i, target in enumerate(targets) for _ in target['boxes']])
                 box_tensors = torch.cat([batch_index.unsqueeze(1).cuda(),object_boxes.cuda()], axis=1) #[K,5]
-                if args.fc_version:
-                    backbone_output = features[0].tensors #torch.Size([B, 2048, 35, 31]) -> torch.Size([B, 256, 35, 31])
-                    feature_H, feature_W = backbone_output.shape[2], backbone_output.shape[3]
-                        
-                    box_tensors[...,1], box_tensors[...,3] = feature_W*box_tensors[...,1], feature_W*box_tensors[...,3] 
-                    box_tensors[...,2], box_tensors[...,4] = feature_H*box_tensors[...,2], feature_H*box_tensors[...,4] 
 
-                    #feature_output : torch.Size([4, 256, 35, 31])
-                    pooled_feature = self.attribute_roi_align(input = backbone_output, rois = box_tensors.cuda()) 
-                    #x = self.attribute_conv(pooled_feature) 
-                    x = self.attribute_avgpool(pooled_feature) 
+                encoder_src = self.input_proj(src)
+                B,C,H,W = encoder_src.shape 
+                encoder_src = encoder_src.flatten(2).permute(2, 0, 1)
+                pos_embed = pos[-1].flatten(2).permute(2, 0, 1)
+                mask = mask.flatten(1)
+                memory = self.transformer.encoder(encoder_src, src_key_padding_mask=mask, pos=pos_embed)
+                encoder_output = memory.permute(1, 2, 0) 
+                encoder_output = encoder_output.view([B,C,H,W]) 
+                feature_H, feature_W = encoder_output.shape[2], encoder_output.shape[3]
+
+                encoder_output = F.relu(encoder_output)
+
+                #normalize box for feature size (exclude padding size) 
+                for box_tensor in box_tensors: 
+                    h_size, w_size = masking_shape[int(box_tensor[0].item())][0], masking_shape[int(box_tensor[0].item())][1]
+                    box_tensor[1], box_tensor[3] = w_size*box_tensor[1], w_size*box_tensor[3] 
+                    box_tensor[2], box_tensor[4] = h_size*box_tensor[2], h_size*box_tensor[4] 
+
+                #img level binary mask -> normalize to feature size(excluding padding) -> add padding to normalized mask
+                if args.input_masking:
+                    binary_masks = []
+                    for target in targets:
+                        for mask in target['masks']:
+                            binary_masks.append(mask)
+
+                    assert len(binary_masks) == len(object_boxes)
+
+                    pooled_features = []
+                    feature_H, feature_W = encoder_output.shape[2], encoder_output.shape[3]
+                    for mask, object_box in zip(binary_masks,object_boxes):
+                        batch_index = int(object_box[0].item())
+                        tmp_tensor = [torch.tensor(int(0)).unsqueeze(0).cuda()]
+                        tmp_tensor.extend([box_tensor[1:]])
+                        tmp_tensor = torch.cat(tmp_tensor).unsqueeze(0)
+                        if mask is not None and mask.sum() != 0: 
+                            size_H, size_W = masking_shape[batch_index][0], masking_shape[batch_index][1] 
+                            resized_mask = F.interpolate(torch.tensor(mask).float().unsqueeze(0).unsqueeze(0), size=(size_H, size_W), mode='bilinear')
+                            resized_mask = resized_mask.squeeze(0).squeeze(0)
+                            padded_mask = torch.from_numpy(np.pad(resized_mask, ((0,feature_H-resized_mask.shape[0]),(0,feature_W-resized_mask.shape[1])), 'constant', constant_values=False)).cuda()
+                            masked_feature = (encoder_output[batch_index]*padded_mask).unsqueeze(0)
+                            pooled_feature = self.attribute_roi_align(input = masked_feature, rois = tmp_tensor.cuda())
+                            if pooled_feature.sum() == 0:
+                                orig_pooled_feature = self.attribute_roi_align(input = encoder_output[batch_index].unsqueeze(0), rois = tmp_tensor.cuda())
+                                pooled_features.append(orig_pooled_feature)
+                            else:
+                                pooled_features.append(pooled_feature)
+
+                        #binary_mask is None
+                        else: 
+                            pooled_feature = self.attribute_roi_align(input = encoder_output[batch_index].unsqueeze(0), rois = tmp_tensor.cuda())
+                            pooled_features.append(pooled_feature)
+
+                    x = self.attribute_conv(torch.cat(pooled_features)) 
+                    x = self.attribute_avgpool(x) 
                     x = torch.flatten(x, 1)
-                    #import pdb; pdb.set_trace()
-                    x = self.attribute_fc1(x) #차원수 맞춰줘야함.
-                    x = self.attribute_fc2(x)
                     outputs_class = self.attribute_class_embed(x)
-
-                
-                else:
-                    if args.br: #backbone feature roi align
-                        backbone_output = self.attribute_input_proj(features[0].tensors) #torch.Size([B, 2048, 35, 31]) -> torch.Size([B, 256, 35, 31])
-                        feature_H, feature_W = backbone_output.shape[2], backbone_output.shape[3]
                         
-                        box_tensors[...,1], box_tensors[...,3] = feature_W*box_tensors[...,1], feature_W*box_tensors[...,3] 
-                        box_tensors[...,2], box_tensors[...,4] = feature_H*box_tensors[...,2], feature_H*box_tensors[...,4] 
+                elif args.output_masking: #roi aligned feature masking          
+                    binary_masks = []
+                    for target in targets:
+                        for mask in target['masks']:
+                            binary_masks.append(mask)
+                    
+                    assert len(binary_masks) == len(object_boxes)
+                    output_masks = []
+                    for mask, object_box in zip(binary_masks,object_boxes):
+                        if mask is not None and mask.sum() != 0: 
+                            orig_size = mask.shape
+                            h,w = orig_size[0], orig_size[1]
+                            unnorm_x1, unnorm_x2 = w*object_box[0], w*object_box[2]  #object_box (batch_idx,x1,y1,x2,y2)
+                            unnorm_y1, unnorm_y2 = h*object_box[1], h*object_box[3]
+                            unnorm_box = (unnorm_x1, unnorm_y1, unnorm_x2, unnorm_y2)
+                            cropped_mask_tensor = self.crop2box(unnorm_box, mask)    
+                            if cropped_mask_tensor.sum() == 0: 
+                                import pdb; pdb.set_trace()
+                                output_mask = torch.ones_like(torch.empty(7,7)).float().unsqueeze(0).unsqueeze(0)
+                                output_masks.append(output_mask)
+                            else:                        
+                                output_mask = F.interpolate(torch.tensor(cropped_mask_tensor).float().unsqueeze(0).unsqueeze(0), size=(7, 7), mode='bilinear')
+                                output_masks.append(output_mask)
+                        
+                        else: #binary_mask is None
+                            output_mask = torch.ones_like(torch.empty(7,7)).float().unsqueeze(0).unsqueeze(0)
+                            output_masks.append(output_mask) 
 
-                        #feature_output : torch.Size([4, 256, 35, 31])
-                        pooled_feature = self.attribute_roi_align(input = backbone_output, rois = box_tensors.cuda()) 
-                        x = self.attribute_conv(pooled_feature) 
+                    pooled_feature = self.attribute_roi_align(input = encoder_output, rois = box_tensors.cuda()) 
+                    x = self.attribute_conv(pooled_feature*torch.cat(output_masks).cuda()) 
+                    x = self.attribute_avgpool(x) 
+                    x = torch.flatten(x, 1)
+                    outputs_class = self.attribute_class_embed(x)                           
+
+                #NO MASK EVALUATION
+                else:
+                    pooled_feature = self.attribute_roi_align(input = encoder_output, rois = box_tensors.cuda()) 
+                    if args.object_embedding:
+                        import pdb; pdb.set_trace()
+                        object_embedding = [target['clip_em'] for target in targets]
+                        gated_feature = self.gating_function(pooled_feature, object_embedding)
+                        x = self.attribute_conv(gated_feature) 
                         x = self.attribute_avgpool(x) 
                         x = torch.flatten(x, 1)
-                        outputs_class = self.attribute_class_embed(x) #torch.Size([K, 620])
-                        
-                    else: #encoder feature roi align
-                        encoder_src = self.input_proj(src)
-                        B,C,H,W = encoder_src.shape 
-                        encoder_src = encoder_src.flatten(2).permute(2, 0, 1)
-                        pos_embed = pos[-1].flatten(2).permute(2, 0, 1)
-                        mask = mask.flatten(1)
-                        memory = self.transformer.encoder(encoder_src, src_key_padding_mask=mask, pos=pos_embed)
-                        encoder_output = memory.permute(1, 2, 0) 
-                        encoder_output = encoder_output.view([B,C,H,W]) 
-                        feature_H, feature_W = encoder_output.shape[2], encoder_output.shape[3]
-                    
-                        #unnormalize box size to feature map size 
-                        box_tensors[...,1], box_tensors[...,3] = feature_W*box_tensors[...,1], feature_W*box_tensors[...,3] 
-                        box_tensors[...,2], box_tensors[...,4] = feature_H*box_tensors[...,2], feature_H*box_tensors[...,4] 
-                        
+                        outputs_class = self.attribute_class_embed(x)
+
+                    elif args.predict_mask:
+                        x_256 = features[0].tensors #torch.Size([8, 256, 253, 276])
+                        x_512 = features[1].tensors #torch.Size([8, 512, 127, 138])
+                        x_1024 = features[2].tensors #torch.Size([8, 1024, 64, 69])
+                        x_2048 = features[3].tensors #torch.Size([8, 2048, 32, 35])
+                        x = self.relu(self.deconv1(x_2048)) #torch.Size([8, 1024, 64, 70])               
+                        if x_1024.shape[2:] != x.shape[2:]:
+                            H = x.shape[2:][0] - x_1024.shape[2:][0]
+                            W = x.shape[2:][1] - x_1024.shape[2:][1]
+                            x_1024 = F.pad(x_1024,(0,W,0,H),"constant",0)
+                        x = self.bn1(x_1024 + x) #torch.Size([8, 1024, 64, 70])                    
+                        x = self.relu(self.deconv2(x)) #torch.Size([8, 512, 128, 140])
+                        if x_512.shape[2:] != x.shape[2:]:
+                            H = x.shape[2:][0] - x_512.shape[2:][0]
+                            W = x.shape[2:][1] - x_512.shape[2:][1]
+                            x_512 = F.pad(x_512,(0,W,0,H),"constant",0)
+                        x = self.bn2(x_512 + x) #torch.Size([8, 512, 128, 140])            
+                        x = self.relu(self.deconv3(x)) #torch.Size([8, 256, 256, 280])           
+                        if x_256.shape[2:] != x.shape[2:]:
+                            H = x.shape[2:][0] - x_256.shape[2:][0]
+                            W = x.shape[2:][1] - x_256.shape[2:][1]
+                            x_256 = F.pad(x_256,(0,W,0,H),"constant",0)
+                        x = self.bn3(x_256 + x) #torch.Size([8, 256, 256, 280])                    
+                        mask_prediction = self.mask_classifier(x) 
+
+                        mask_preds = []
+                        #gt_masks = []
+                        for i,target in enumerate(targets):
+                            batch_index = i
+                            mask_pred = mask_prediction[i].repeat((len(target['masks']),1,1))
+                            mask_preds.append(mask_pred)
+
+                        mask_preds = torch.cat(mask_preds).sigmoid()
+
+                        #attribute prediciton                    
                         pooled_feature = self.attribute_roi_align(input = encoder_output, rois = box_tensors.cuda()) 
+                        resized_mask = F.interpolate(mask_preds.unsqueeze(1), size=(pooled_feature.shape[-2], pooled_feature.shape[-1]), mode='bilinear')
+                        x = self.attribute_conv(pooled_feature*resized_mask) 
+                        x = self.attribute_avgpool(x) 
+                        x = torch.flatten(x, 1)
+                        outputs_class = self.attribute_class_embed(x)
+
+
+                    else:
                         x = self.attribute_conv(pooled_feature) 
                         x = self.attribute_avgpool(x) 
                         x = torch.flatten(x, 1)
                         outputs_class = self.attribute_class_embed(x)
             
+            #training
             else:
-                if args.fc_version:
-                    if args.br: #backbone feature roi align    
-                        object_boxes = torch.cat([torch.stack([target['boxes'][...,0]/target['orig_size'][1],target['boxes'][...,1]/target['orig_size'][0],target['boxes'][...,2]/target['orig_size'][1],target['boxes'][...,3]/target['orig_size'][0]],axis=1) for target in targets])
-                        batch_index = torch.cat([torch.Tensor([int(i)]) for i, target in enumerate(targets) for _ in target['boxes']])
-                        box_tensors = torch.cat([batch_index.unsqueeze(1).cuda(),object_boxes.cuda()], axis=1) #[K,5]
-                        backbone_output = features[0].tensors #torch.Size([B, 2048, 35, 31]) -> torch.Size([B, 256, 35, 31])
-                        feature_H, feature_W = backbone_output.shape[2], backbone_output.shape[3]
-                        
-                        box_tensors[...,1], box_tensors[...,3] = feature_W*box_tensors[...,1], feature_W*box_tensors[...,3] 
-                        box_tensors[...,2], box_tensors[...,4] = feature_H*box_tensors[...,2], feature_H*box_tensors[...,4] 
+                object_boxes = [torch.Tensor([int(i)]+self.convert_bbox(box.tolist())) for i, target in enumerate(targets) for box in target['boxes']]
+                box_tensors = torch.stack(object_boxes,0) #[K,5] , K: box annotation length in mini-batch                
+                encoder_src = self.input_proj(src)
+                B,C,H,W = encoder_src.shape
+                encoder_src = encoder_src.flatten(2).permute(2, 0, 1)
+                pos_embed = pos[-1].flatten(2).permute(2, 0, 1)
+                mask = mask.flatten(1)
+                memory = self.transformer.encoder(encoder_src, src_key_padding_mask=mask, pos=pos_embed)
+                encoder_output = memory.permute(1, 2, 0) 
+                encoder_output = encoder_output.view([B,C,H,W]) 
+                encoder_output = F.relu(encoder_output)
 
-                        #feature_output : torch.Size([4, 256, 35, 31])
-                        pooled_feature = self.attribute_roi_align(input = backbone_output, rois = box_tensors.cuda()) 
-                        #x = self.attribute_conv(pooled_feature) 
-                        x = self.attribute_avgpool(pooled_feature) 
+                for box_tensor in box_tensors:
+                    batch_idx = int(box_tensor[0])
+                    non_padded_shape = masking_shape[batch_idx] #(H,W)
+                    box_tensor[1], box_tensor[3] = non_padded_shape[1]*box_tensor[1], non_padded_shape[1]*box_tensor[3] 
+                    box_tensor[2], box_tensor[4] = non_padded_shape[0]*box_tensor[2], non_padded_shape[0]*box_tensor[4] 
+
+                if args.predict_mask: #args.masking = True로
+                    x_256 = features[0].tensors #torch.Size([8, 256, 253, 276])
+                    x_512 = features[1].tensors #torch.Size([8, 512, 127, 138])
+                    x_1024 = features[2].tensors #torch.Size([8, 1024, 64, 69])
+                    x_2048 = features[3].tensors #torch.Size([8, 2048, 32, 35])
+                    x = self.relu(self.deconv1(x_2048)) #torch.Size([8, 1024, 64, 70])               
+                    if x_1024.shape[2:] != x.shape[2:]:
+                        H = x.shape[2:][0] - x_1024.shape[2:][0]
+                        W = x.shape[2:][1] - x_1024.shape[2:][1]
+                        x_1024 = F.pad(x_1024,(0,W,0,H),"constant",0)
+                    x = self.bn1(x_1024 + x) #torch.Size([8, 1024, 64, 70])                    
+                    x = self.relu(self.deconv2(x)) #torch.Size([8, 512, 128, 140])
+                    if x_512.shape[2:] != x.shape[2:]:
+                        H = x.shape[2:][0] - x_512.shape[2:][0]
+                        W = x.shape[2:][1] - x_512.shape[2:][1]
+                        x_512 = F.pad(x_512,(0,W,0,H),"constant",0)
+                    x = self.bn2(x_512 + x) #torch.Size([8, 512, 128, 140])            
+                    x = self.relu(self.deconv3(x)) #torch.Size([8, 256, 256, 280])           
+                    if x_256.shape[2:] != x.shape[2:]:
+                        H = x.shape[2:][0] - x_256.shape[2:][0]
+                        W = x.shape[2:][1] - x_256.shape[2:][1]
+                        x_256 = F.pad(x_256,(0,W,0,H),"constant",0)
+                    x = self.bn3(x_256 + x) #torch.Size([8, 256, 256, 280])                    
+                    mask_prediction = self.mask_classifier(x) 
+
+                    mask_preds = []
+                    #gt_masks = []
+                    for i,target in enumerate(targets):
+                        batch_index = i
+                        mask_pred = mask_prediction[i].repeat((len(target['masks']),1,1))
+                        mask_preds.append(mask_pred)
+
+                    mask_preds = torch.cat(mask_preds).sigmoid()
+
+                    #attribute prediciton                    
+                    pooled_feature = self.attribute_roi_align(input = encoder_output, rois = box_tensors.cuda()) 
+                    resized_mask = F.interpolate(mask_preds.unsqueeze(1), size=(pooled_feature.shape[-2], pooled_feature.shape[-1]), mode='bilinear')
+                    x = self.attribute_conv(pooled_feature*resized_mask) 
+                    x = self.attribute_avgpool(x) 
+                    x = torch.flatten(x, 1)
+                    outputs_class = self.attribute_class_embed(x)
+                    out = {'mask_pred_logits': mask_preds,'pred_logits':outputs_class,'type': dtype,'dataset':dataset}
+                    return out
+
+                elif args.input_masking:
+                    binary_masks = []
+                    for target in targets:
+                        for mask in target['masks']:
+                            binary_masks.append(mask)
+
+                    assert len(binary_masks) == len(object_boxes)
+
+                    pooled_features = []
+                    feature_H, feature_W = encoder_output.shape[2], encoder_output.shape[3]
+                    for mask, object_box in zip(binary_masks,object_boxes):
+                        batch_index = int(object_box[0].item())
+                        tmp_tensor = [torch.tensor(int(0)).unsqueeze(0)]
+                        tmp_tensor.extend([box_tensor[1:]])
+                        tmp_tensor = torch.cat(tmp_tensor).unsqueeze(0).cuda()
+                        if mask is not None and mask.sum() != 0: 
+                            size_H, size_W = masking_shape[batch_index][0], masking_shape[batch_index][1] 
+                            resized_mask = F.interpolate(torch.tensor(mask).float().unsqueeze(0).unsqueeze(0), size=(size_H, size_W), mode='bilinear')
+                            resized_mask = resized_mask.squeeze(0).squeeze(0).cpu().numpy()
+                            padded_mask = torch.from_numpy(np.pad(resized_mask, ((0,feature_H-resized_mask.shape[0]),(0,feature_W-resized_mask.shape[1])), 'constant', constant_values=False)).cuda()
+                            masked_feature = (encoder_output[batch_index]*padded_mask).unsqueeze(0)
+                            pooled_feature = self.attribute_roi_align(input = masked_feature, rois = tmp_tensor.cuda())
+                            if pooled_feature.sum() == 0:
+                                orig_pooled_feature = self.attribute_roi_align(input = encoder_output[batch_index].unsqueeze(0), rois = tmp_tensor.cuda())
+                                pooled_features.append(orig_pooled_feature)
+                            else:
+                                pooled_features.append(pooled_feature)
+
+                        #binary_mask is None
+                        else: 
+                            pooled_feature = self.attribute_roi_align(input = encoder_output[batch_index].unsqueeze(0), rois = tmp_tensor.cuda())
+                            pooled_features.append(pooled_feature)
+
+                    x = self.attribute_conv(torch.cat(pooled_features)) 
+                    x = self.attribute_avgpool(x) 
+                    x = torch.flatten(x, 1)
+                    outputs_class = self.attribute_class_embed(x)
+                        
+                elif args.output_masking:
+                    binary_masks = []
+                    for target in targets:
+                        for mask in target['masks']:
+                            binary_masks.append(mask)
+                    
+                    assert len(binary_masks) == len(object_boxes)
+
+                    output_masks = []
+                    for mask, object_box in zip(binary_masks,object_boxes):
+                        if mask is not None and mask.sum() != 0: 
+                            orig_size = mask.shape
+                            h,w = orig_size[0], orig_size[1]
+                            unnorm_x1, unnorm_x2 = w*object_box[1], w*object_box[3]  #object_box (batch_idx,x1,y1,x2,y2)
+                            unnorm_y1, unnorm_y2 = h*object_box[2], h*object_box[4]
+                            unnorm_box = (unnorm_x1, unnorm_y1, unnorm_x2, unnorm_y2)
+                            cropped_mask_tensor = self.crop2box(unnorm_box, mask)    
+                            if cropped_mask_tensor.sum() == 0: 
+                                output_mask = torch.ones_like(torch.empty(7,7)).float().unsqueeze(0).unsqueeze(0).cuda()
+                                output_masks.append(output_mask)
+                            else:                        
+                                output_mask = F.interpolate(torch.tensor(cropped_mask_tensor).float().unsqueeze(0).unsqueeze(0), size=(7, 7), mode='bilinear',align_corners=False)
+                                output_masks.append(output_mask)
+                        
+                        else: #binary_mask is None
+                            output_mask = torch.ones_like(torch.empty(7,7)).float().unsqueeze(0).unsqueeze(0).cuda()
+                            output_masks.append(output_mask) 
+                    pooled_feature = self.attribute_roi_align(input = encoder_output, rois = box_tensors.cuda())*torch.cat(output_masks).cuda()
+                    if args.object_embedding:
+                        object_embedding = [target['clip_em'] for target in targets]
+                        gated_feature = self.gating_function(pooled_feature, object_embedding)
+                        x = self.attribute_conv(gated_feature) 
+                        x = self.attribute_avgpool(x) 
                         x = torch.flatten(x, 1)
-                        #import pdb; pdb.set_trace()
-                        x = self.attribute_fc1(x) #차원수 맞춰줘야함.
-                        x = self.attribute_fc2(x)
                         outputs_class = self.attribute_class_embed(x)
-
-                    else: #encoder feature roi align-> freeze해야함.
-                        object_boxes = [torch.Tensor([int(i)]+self.convert_bbox(box.tolist())) for i, target in enumerate(targets) for box in target['boxes']]
-                        box_tensors = torch.stack(object_boxes,0) #[K,5] , K: box annotation length in mini-batch
-                        encoder_src = self.input_proj(src)
-                        B,C,H,W = encoder_src.shape
-                        encoder_src = encoder_src.flatten(2).permute(2, 0, 1)
-                        pos_embed = pos[-1].flatten(2).permute(2, 0, 1)
-                        mask = mask.flatten(1)
-                        memory = self.transformer.encoder(encoder_src, src_key_padding_mask=mask, pos=pos_embed)
-                        encoder_output = memory.permute(1, 2, 0) 
-                        encoder_output = encoder_output.view([B,C,H,W]) 
-                        
-                        feature_H, feature_W = encoder_output.shape[2], encoder_output.shape[3]
-
-                        #unnormalize box size
-                        box_tensors[...,1], box_tensors[...,3] = feature_W*box_tensors[...,1], feature_W*box_tensors[...,3] 
-                        box_tensors[...,2], box_tensors[...,4] = feature_H*box_tensors[...,2], feature_H*box_tensors[...,4] 
-                        
-                        pooled_feature = self.attribute_roi_align(input = encoder_output, rois = box_tensors.cuda()) 
+                    else:
                         x = self.attribute_conv(pooled_feature) 
                         x = self.attribute_avgpool(x) 
                         x = torch.flatten(x, 1)
-                        x = self.attribute_fc1(x) #차원수 맞춰줘야함.
-                        x = self.attribute_fc2(x)
                         outputs_class = self.attribute_class_embed(x)
 
-
+                #no mask training
                 else:
-                    if args.br: #backbone feature roi align    
-                        object_boxes = torch.cat([torch.stack([target['boxes'][...,0]/target['orig_size'][1],target['boxes'][...,1]/target['orig_size'][0],target['boxes'][...,2]/target['orig_size'][1],target['boxes'][...,3]/target['orig_size'][0]],axis=1) for target in targets])
-                        batch_index = torch.cat([torch.Tensor([int(i)]) for i, target in enumerate(targets) for _ in target['boxes']])
-                        box_tensors = torch.cat([batch_index.unsqueeze(1).cuda(),object_boxes.cuda()], axis=1) #[K,5]
-                        backbone_output = self.attribute_input_proj(features[0].tensors) #torch.Size([B, 2048, 35, 31]) -> torch.Size([B, 256, 35, 31])
-                        feature_H, feature_W = backbone_output.shape[2], backbone_output.shape[3]
-                        
-                        box_tensors[...,1], box_tensors[...,3] = feature_W*box_tensors[...,1], feature_W*box_tensors[...,3] 
-                        box_tensors[...,2], box_tensors[...,4] = feature_H*box_tensors[...,2], feature_H*box_tensors[...,4] 
-
-                        #feature_output : torch.Size([4, 256, 35, 31])
-                        pooled_feature = self.attribute_roi_align(input = backbone_output, rois = box_tensors.cuda()) 
-                        x = self.attribute_conv(pooled_feature) 
+                    pooled_feature = self.attribute_roi_align(input = encoder_output, rois = box_tensors.cuda()) 
+                    if args.object_embedding:
+                        object_embedding = [target['clip_em'] for target in targets]
+                        gated_feature = self.gating_function(pooled_feature, object_embedding)
+                        x = self.attribute_conv(gated_feature) 
                         x = self.attribute_avgpool(x) 
                         x = torch.flatten(x, 1)
                         outputs_class = self.attribute_class_embed(x)
-
-                    else: #encoder feature roi align-> freeze해야함.
-                        object_boxes = [torch.Tensor([int(i)]+self.convert_bbox(box.tolist())) for i, target in enumerate(targets) for box in target['boxes']]
-                        box_tensors = torch.stack(object_boxes,0) #[K,5] , K: box annotation length in mini-batch
-                        encoder_src = self.input_proj(src)
-                        B,C,H,W = encoder_src.shape
-                        encoder_src = encoder_src.flatten(2).permute(2, 0, 1)
-                        pos_embed = pos[-1].flatten(2).permute(2, 0, 1)
-                        mask = mask.flatten(1)
-                        memory = self.transformer.encoder(encoder_src, src_key_padding_mask=mask, pos=pos_embed)
-                        encoder_output = memory.permute(1, 2, 0) 
-                        encoder_output = encoder_output.view([B,C,H,W]) 
-                        
-                        feature_H, feature_W = encoder_output.shape[2], encoder_output.shape[3]
-
-                        #unnormalize box size
-                        box_tensors[...,1], box_tensors[...,3] = feature_W*box_tensors[...,1], feature_W*box_tensors[...,3] 
-                        box_tensors[...,2], box_tensors[...,4] = feature_H*box_tensors[...,2], feature_H*box_tensors[...,4] 
-                        
-                        pooled_feature = self.attribute_roi_align(input = encoder_output, rois = box_tensors.cuda()) 
+                    else:
                         x = self.attribute_conv(pooled_feature) 
                         x = self.attribute_avgpool(x) 
                         x = torch.flatten(x, 1)
@@ -277,10 +470,8 @@ class DETRHOI(nn.Module):
 
             out = {'pred_logits': outputs_class,'type': dtype,'dataset':dataset}
 
-            #voutputs_class = self.att_class_embed(hs)            
-            # outputs_obj_class = self.obj_class_embed(hs)
-        
         elif dtype=='hoi':
+
             encoder_src = self.input_proj(src)
             hs = self.transformer(encoder_src, mask, self.query_embed.weight, pos[-1])[0]
 
@@ -310,17 +501,82 @@ class DETRHOI(nn.Module):
             elif dtype=='att':
                 out['aux_outputs'] = self._set_aux_loss_att(outputs_class)
 
-        #import pdb; pdb.set_trace()
         return out
 
+    def gating_function(self, pooled_feature, object_embeddings):
+        object_embeds = []
+        for object_embedding in object_embeddings:
+            for embedding in object_embedding:
+                object_embeds.append(torch.tensor(embedding).unsqueeze(0))
+        object_embeds = torch.cat(object_embeds)
+        
+        if len(object_embeds) != len(pooled_feature):
+            import pdb; pdb.set_trace()
+
+        assert len(object_embeds) == len(pooled_feature)
+        gated_embedding = self.obj_em_relu(self.obj_em_w1(object_embeds.cuda())).sigmoid()
+        gated_feature = (gated_embedding.unsqueeze(-1).unsqueeze(-1))*pooled_feature
+
+        return gated_feature 
+
+    def masking_pts(self,masking_shape,feature_size,pts):
+        masking_weight =[]
+        for data in pts:
+            if data is None: #no polygon annotation
+                mask = np.ones([feature_size[0],feature_size[1]])
+                masking_weight.append(mask)
+            else:                
+                mask_shape = (masking_shape[data[0]][0],masking_shape[data[0]][1])
+                mask = polygon2mask(mask_shape, data[1])
+                mask = np.pad(mask, ((0,feature_size[0]-mask.shape[0]),(0,feature_size[1]-mask.shape[1])), 'constant', constant_values=False)
+                mask = mask.astype(int)
+                #mask = np.where(mask==0,1,mask)
+                masking_weight.append(mask)
+
+        assert mask.shape == feature_size
+
+        return np.float32(np.array(masking_weight))
+
+    def crop2box(self, unnorm_box, binary_mask): 
+        cropped_mask = binary_mask[int(unnorm_box[1].item()):int(unnorm_box[3].item()),int(unnorm_box[0].item()):int(unnorm_box[2].item())]
+        return cropped_mask
+
+    def poly2mask(self, orig_size, polygons):
+        binary_masks = []
+        for polygon in polygons:
+            if polygon is not None:
+                binary_mask = polygon2mask(orig_size, polygon[0]).astype(int) #orig_size : (H,W)
+            else:
+                binary_mask = None
+            binary_masks.append(binary_mask)
+        return binary_masks
+
+
+    def mask_normalizer(self,orig_size,pts,feature_size): #orig_size : (H,W)
+        if pts is None:        
+            tmp = None
+            # final_pts = [int(feature_size[2])]
+            # final_pts.append(tmp)
+            return tmp
+        else:
+            pts = np.array(pts[0])
+            tmp = np.empty(pts.shape)                
+            tmp[...,0], tmp[...,1] = feature_size[1]*(pts[...,0] / orig_size[1]), feature_size[0]*(pts[...,1] / orig_size[0])
+            final_pts = [int(feature_size[2])]
+            final_pts.append(tmp)
+        return final_pts #[img_index, pts np array]
+ 
     def convert_bbox(self,bbox:List): #annotation bbox (c_x,c_y,w,h)-> (x1,y1,x2,y2) for roi align
-        #instance_bbox: [x, y, width, height]
         c_x, c_y, w,h = bbox[0], bbox[1], bbox[2], bbox[3]
         x1,y1 = c_x-(w/2), c_y-(h/2)
         x2,y2 = c_x+(w/2), c_y+(h/2)  
-        # x1,y1 = bbox[0], bbox[1]
-        # x2,y2 = x1 + bbox[2], y1 + bbox[3]
         return [x1,y1,x2,y2]
+
+    # def convert_bbox(self,bbox:List): #annotation bbox (c_x,c_y,w,h)-> (x1,y1,x2,y2) for roi align
+    #     import pdb; pdb.set_trace()
+    #     x1,y1,w,h = bbox[0], bbox[1], bbox[2], bbox[3]
+    #     x2,y2 = x1+w, y1+h  
+    #     return [x1,y1,x2,y2]
 
     @torch.jit.unused
     def _set_aux_loss_hoi(self, outputs_obj_class, outputs_class, outputs_sub_coord, outputs_obj_coord):
@@ -467,6 +723,44 @@ class SetCriterionHOI(nn.Module):
             losses['loss_obj_giou'] = (loss_obj_giou * exist_obj_boxes).sum() / (exist_obj_boxes.sum() + 1e-4)
         return losses
 
+    def loss_mask_labels(self, outputs, targets, indices, num_att_or_inter,dtype):
+        mask_predictions = outputs['mask_pred_logits']
+        gts = []
+        for target in targets:
+            binary_masks = target['masks']
+            for binary_mask in binary_masks:
+                if binary_mask is None:
+                    gts.append(None)
+                else:
+                    gts.append(torch.tensor(binary_mask))
+        # for i,target in enumerate(targets):
+        #     batch_index = i
+        #     binary_mask = target['masks']
+        #     #mask_prediction = outputs['mask_pred_logits'][i].repeat((len(binary_mask),1,1))
+        #     #mask_predictions.append(mask_prediction)
+        #     gt_masks.append(binary_mask)
+
+        # mask_predictions = torch.cat(mask_predictions)
+        # import pdb; pdb.set_trace()
+        # gts = []        
+        # for masks in gt_masks:
+        #     for mask in masks:
+        #         if mask is None:
+        #             gts.append(None)
+        #         else:
+        #             gts.append(torch.tensor(mask))
+        assert len(mask_predictions) == len(gts)
+
+        loss_mask_ce = 0
+        for pred, gt in zip(mask_predictions,gts):
+            if gt is not None:
+                size_H,size_W = pred.shape[0], pred.shape[1]
+                resized_gt = F.interpolate(gt.float().unsqueeze(0).unsqueeze(0), size=(size_H,size_W), mode='bilinear')
+                loss = F.binary_cross_entropy_with_logits(pred.sigmoid(), resized_gt[0][0].cuda())
+                loss_mask_ce += loss
+        losses = {'loss_mask_ce': loss_mask_ce}        
+        return losses
+
     def loss_att_labels(self, outputs, targets, indices, num_att_or_inter,dtype):
         
         if dtype=='hoi':
@@ -601,17 +895,28 @@ class SetCriterionHOI(nn.Module):
         #     'sub_obj_boxes': self.loss_sub_obj_boxes,
         #     'obj_att_boxes':self.loss_att_obj_boxes,
         # }
-
         loss_map = {
             'obj_labels': self.loss_obj_labels,
             'obj_cardinality': self.loss_obj_cardinality,
             'verb_labels': self.loss_verb_labels,
             'att_labels': self.loss_att_labels,
-            'sub_obj_boxes': self.loss_sub_obj_boxes,
+            'mask_labels' : self.loss_mask_labels,
+            'sub_obj_boxes': self.loss_sub_obj_boxes
         }
 
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
+        
         return loss_map[loss](outputs, targets, indices, num, dtype, **kwargs)
+    
+    def poly2mask(self, orig_size, polygons):
+        binary_masks = []
+        for polygon in polygons:
+            if polygon is not None:
+                binary_mask = polygon2mask(orig_size, polygon[0]).astype(int) #orig_size : (H,W)
+            else:
+                binary_mask = None
+            binary_masks.append(binary_mask)
+        return binary_masks
 
     def forward(self, outputs, targets):
         outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs'}
@@ -731,18 +1036,11 @@ class PostProcessHOI_ATT(nn.Module):
             
             results = []
             for ol, ats, ob in zip(obj_labels, attr_scores, obj_boxes):
-                # sl = torch.full_like(ol, 0) # self.subject_category_id = 0 in HICO-DET
-                # l = torch.cat((sl, ol))
-                # b = torch.cat((sb, ob))
-                
-                
-                results.append({'labels': ol.to('cpu'), 'boxes': ob.to('cpu')})
-                
+                results.append({'labels': ol.to('cpu'), 'boxes': ob.to('cpu')})                
                 ids = torch.arange(ob.shape[0])
                 res_dict = {
                     'attr_scores': ats.to('cpu'),
-                    'obj_ids': ids,
-                    
+                    'obj_ids': ids                    
                 }
                 results[-1].update(res_dict)
 

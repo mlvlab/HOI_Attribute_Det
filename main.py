@@ -25,8 +25,8 @@ def get_args_parser():
     parser.add_argument('--lr_backbone', default=1e-5, type=float)
     parser.add_argument('--batch_size', default=2, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
-    parser.add_argument('--epochs', default=150, type=int)
-    parser.add_argument('--lr_drop', default=100, type=int)
+    parser.add_argument('--epochs', default=30, type=int)
+    parser.add_argument('--lr_drop', default=20, type=int)
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
                         help='gradient clipping max norm')
 
@@ -141,6 +141,10 @@ def get_args_parser():
     parser.add_argument('--num_obj_att_classes', type=int, default=1,
                         help="Number of object classes")
 
+    #masked roi align
+    parser.add_argument('--masking', action='store_true')
+    parser.add_argument('--test_polygon', default='data/vaw/annotations/test_vaw_polygon.npy')
+
     # mtl
     parser.add_argument('--mtl', action='store_true')
     parser.add_argument('--mtl_data', type=utils.arg_as_list,default=[],
@@ -163,6 +167,8 @@ def get_args_parser():
 
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
+
+
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
     parser.add_argument('--seed', default=42, type=int)
@@ -183,6 +189,22 @@ def get_args_parser():
     #freeze transformer (pretrained hoi parmeters)
     parser.add_argument('--freeze_hoi', action='store_true')
 
+
+    #feature map vis 
+    parser.add_argument('--img_path', default='samples/2361755.jpg')
+    parser.add_argument('--vis_img', action='store_true')
+
+    #mask prediction mode 
+    parser.add_argument('--predict_mask', action='store_true')
+
+    #masking argument
+    parser.add_argument('--output_masking', action='store_true')
+    parser.add_argument('--input_masking', action='store_true')
+
+    #object embedding argument
+    parser.add_argument('--object_embedding', action='store_true')
+
+
     #fc version
     parser.add_argument('--fc_version', action='store_true')
 
@@ -193,7 +215,6 @@ def get_args_parser():
     parser.add_argument('--run_name', default='train_num_1')
 
     #for video vis
-    #parser.add_argument('--output_dir', default='output_video/example2.mp4',help='output path')
     parser.add_argument('--show_vid', action='store_true',help='check video inference')
     parser.add_argument('--video_file', default='video/example2.mp4',help='video source')
     parser.add_argument('--checkpoint', default='checkpoints/hoi/checkpoint.pth',help='model checkpoint path')
@@ -206,8 +227,9 @@ def get_args_parser():
     parser.add_argument('--webcam', default='', type=str)
     parser.add_argument('--vis_demo',action='store_true')
     parser.add_argument('--iou_threshold', default=0.9,type=float,help='iou threshold value')
-    return parser
 
+
+    return parser
 
 def main(args):
     utils.init_distributed_mode(args)
@@ -484,38 +506,81 @@ def main(args):
                 }, checkpoint_path)
 
 
-        if (epoch+1)%1==0:
+        if (epoch+1)%100==0:
             if args.hoi or args.att_det or args.mtl:
                 if args.mtl:
                     for dlv in data_loader_val:
-                        if 'v-coco' in os.fspath(dlv.dataset.img_folder) or 'hico' in os.fspath(dlv.dataset.img_folder):
-                            test_stats,dataset_name = evaluate_hoi_att(args.dataset_file, model, postprocessors, dlv, args.subject_category_id, device, args)
-                            if 'v-coco' in dataset_name:
-                                if utils.get_rank() == 0 and args.wandb:                        
-                                    wandb.log({
-                                        'mAP_all': test_stats['mAP_all'],
-                                        'mAP_thesis':test_stats['mAP_thesis']
-                                    })
-                                performance=test_stats['mAP_thesis']
-                            elif 'hico' in dataset_name:
-                                if utils.get_rank() == 0 and args.wandb:
-                                    wandb.log({
-                                        'mAP': test_stats['mAP'],
-                                        'mAP rare': test_stats['mAP rare'],
-                                        'mAP non-rare':test_stats['mAP non-rare'],
-                                        'mean max recall':test_stats['mean max recall']
-                                    })
-                                performance=test_stats['mAP']
-                            elif 'vaw' in dataset_name:
-                                if utils.get_rank() == 0 and args.wandb:
-                                    wandb.log({
-                                        'mAP': test_stats['mAP'],
-                                        'mAP rare': test_stats['mAP rare'],
-                                        'mAP non-rare':test_stats['mAP non-rare'],
-                                        'mean max recall':test_stats['mean max recall']
-                                    })
-                                performance=test_stats['mAP']
-                        coco_evaluator = None
+                        test_stats,dataset_name = evaluate_hoi_att(args.dataset_file, model, postprocessors, dlv, args.subject_category_id, device, args)
+                        log_stats = {**{f'test_{k}': v for k, v in test_stats.items()}}
+                        if 'v-coco' in dataset_name:
+                            if args.output_dir and utils.is_main_process():
+                                with (output_dir / "log.txt").open("a") as f:
+                                    f.write(json.dumps(log_stats) + "\n")
+
+                            if utils.get_rank() == 0 and args.wandb:
+                        
+                                wandb.log({
+                                    'mAP_all': test_stats['mAP_all'],
+                                    'mAP_thesis':test_stats['mAP_thesis']
+                                })
+                            performance=test_stats['mAP_thesis']
+
+                        elif 'hico' in dataset_name:
+                            if args.output_dir and utils.is_main_process():
+                                with (output_dir / "log.txt").open("a") as f:
+                                    f.write(json.dumps(log_stats) + "\n")
+
+                            if utils.get_rank() == 0 and args.wandb:
+                                wandb.log({
+                                    'mAP': test_stats['mAP'],
+                                    'mAP rare': test_stats['mAP rare'],
+                                    'mAP non-rare':test_stats['mAP non-rare'],
+                                    'mean max recall':test_stats['mean max recall']
+                                })
+                            performance=test_stats['mAP']
+
+                        elif 'vaw' in dataset_name:
+                            #CATEGORIES = ['all', 'head', 'medium', 'tail'] 
+                            if args.output_dir and utils.is_main_process():
+                                with (output_dir / "log.txt").open("a") as f:
+                                    f.write(json.dumps(log_stats) + "\n")
+
+                            if utils.get_rank() == 0 and args.wandb:
+                                wandb.log({
+                                    'vaw_mAP_all': test_stats['mAP_all'],
+                                    'vaw_mAP_head': test_stats['mAP_head'],
+                                    'vaw_mAP_medium':test_stats['mAP_medium'],
+                                    'vaw_mAP_tail':test_stats['mAP_tail']
+                                })
+
+                        # #if 'v-coco' in os.fspath(dlv.dataset.img_folder) or 'hico' in os.fspath(dlv.dataset.img_folder):
+                        # test_stats,dataset_name = evaluate_hoi_att(args.dataset_file, model, postprocessors, dlv, args.subject_category_id, device, args)
+                        # if 'v-coco' in dataset_name:
+                        #     if utils.get_rank() == 0 and args.wandb:                        
+                        #         wandb.log({
+                        #             'mAP_all': test_stats['mAP_all'],
+                        #             'mAP_thesis':test_stats['mAP_thesis']
+                        #         })
+                        #     performance=test_stats['mAP_thesis']
+                        # elif 'hico' in dataset_name:
+                        #     if utils.get_rank() == 0 and args.wandb:
+                        #         wandb.log({
+                        #             'mAP': test_stats['mAP'],
+                        #             'mAP rare': test_stats['mAP rare'],
+                        #             'mAP non-rare':test_stats['mAP non-rare'],
+                        #             'mean max recall':test_stats['mean max recall']
+                        #         })
+                        #     performance=test_stats['mAP']
+                        # elif 'vaw' in dataset_name:
+                        #     if utils.get_rank() == 0 and args.wandb:
+                        #         wandb.log({
+                        #             'mAP': test_stats['mAP'],
+                        #             'mAP rare': test_stats['mAP rare'],
+                        #             'mAP non-rare':test_stats['mAP non-rare'],
+                        #             'mean max recall':test_stats['mean max recall']
+                        #         })
+                        #     performance=test_stats['mAP']
+                        # coco_evaluator = None
                 else:
                     test_stats,dataset_name = evaluate_hoi_att(args.dataset_file, model, postprocessors, data_loader_val, args.subject_category_id, device, args)
                     if 'v-coco' in dataset_name:

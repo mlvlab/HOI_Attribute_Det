@@ -11,7 +11,7 @@ from PIL import Image
 import json
 from collections import defaultdict
 import numpy as np
-
+from skimage.draw import polygon2mask
 import torch
 import torch.utils.data
 import torchvision
@@ -19,10 +19,12 @@ import torchvision
 # from hotr.data.datasets import builtin_meta
 import datasets.transforms as T
 from util.box_ops import box_cxcywh_to_xyxy
-
+from .coco import convert_coco_poly_to_mask
+import warnings
+warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning)
 
 class VAWDetection(torch.utils.data.Dataset):
-    def __init__(self, img_set, img_folder, anno_file, attribute_index,transforms, num_queries):
+    def __init__(self, img_set, img_folder, anno_file, attribute_index, transforms, num_queries):
         self.img_set = img_set
         self.img_folder = img_folder
         with open(anno_file, 'r') as f:
@@ -68,6 +70,11 @@ class VAWDetection(torch.utils.data.Dataset):
         return len(self._valid_att_ids)
     ############################################################################
 
+    def convert_bbox(self,bbox): #annotation bbox (c_x,c_y,w,h)-> (x1,y1,x2,y2) for roi align
+        x1, y1, w,h = bbox[0], bbox[1], bbox[2], bbox[3]
+        x2, y2 = x1+w, y1+h  
+        return [x1,y1,x2,y2]
+
     def __len__(self):
         return len(self.annotations)
 
@@ -79,6 +86,47 @@ class VAWDetection(torch.utils.data.Dataset):
 
         # guard against no boxes via resizing
         boxes = torch.as_tensor(img_anno['boxes'], dtype=torch.float32).reshape(-1, 4)
+        # if self.img_set == 'train':
+
+
+        # box_list = []
+        # for bbox in img_anno['boxes']:
+        #     converted_bbox = self.convert_bbox(bbox)
+        #     box_list.append(converted_bbox)
+        # boxes = torch.tensor(box_list)
+        # boxes[:,0::2] = boxes[:,0::2]/w
+        # boxes[:,1::2] = boxes[:,1::2]/h
+
+
+        # else:
+        #     boxes = img_anno['boxes']
+        # masks = [] 
+        # for polygon in img_anno['instance_polygon']:
+        #     if polygon is None:
+        #         mask = torch.ones((h, w)).unsqueeze(0)
+        #     else:
+        #         mask = convert_coco_poly_to_mask(np.array(polygon), h, w)
+        #     masks.append(mask)
+        # masks = torch.cat(masks)
+
+        mask_list = []
+        for polygon in img_anno['instance_polygon']:
+            if polygon is not None:
+                mask = torch.from_numpy(polygon2mask((w,h),polygon[0]).transpose()).unsqueeze(0)
+                mask_list.append(mask)
+            else:
+                mask = torch.ones((h, w)).unsqueeze(0)
+                mask_list.append(mask)
+        masks = torch.cat(mask_list)
+
+        polygons = img_anno['instance_polygon']
+        img_id = str(img_anno['image_id'])
+        # for polygon in polygons:
+        #     if polygon is None:
+        #         torch.ones
+
+        object_names = img_anno['object_name']
+        #clip_embeds = torch.tensor(img_anno['clip_em'])
 
         if self.img_set == 'train':
             # Add index for confirming which boxes are kept after image transformation
@@ -105,6 +153,7 @@ class VAWDetection(torch.utils.data.Dataset):
         target = {}
         target['orig_size'] = torch.as_tensor([int(h), int(w)])
         target['size'] = torch.as_tensor([int(h), int(w)])
+        
         boxes[:,2:]+=boxes[:,:2]
 
         if self.img_set == 'train':
@@ -115,33 +164,43 @@ class VAWDetection(torch.utils.data.Dataset):
             obj_classes = obj_classes[keep]
             pos_att_classes = pos_att_classes[keep]
             neg_att_classes = neg_att_classes[keep]
-
-            target['boxes'] = boxes
+            target['masks'] = masks[keep]
+            #target['polygons'] =  polygons
+            target['object_name'] = object_names
+            #target['clip_em'] = clip_embeds[keep]
             target['labels'] = obj_classes
             target['pos_att_classes'] = pos_att_classes
             target['neg_att_classes'] = neg_att_classes
             target['iscrowd'] = torch.tensor([0 for _ in range(boxes.shape[0])])
             target['area'] = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
             target['type'] = 'att'
+            target['img_id'] = img_id
+            target['boxes'] = boxes
             if self._transforms is not None:
                 img, target = self._transforms(img, target)
-
+            #target['masks'] =  masks[keep]
+            #target['boxes'] = boxes
+            #target['clip_em'] = clip_embeds[keep]
             target['labels'] = target['labels'][:, 1]
             # target['pos_att_classes'] = target['pos_att_classes'][:, 1]
-            # target['neg_att_classes'] = target['neg_att_classes'][:, 1]
             target['dataset'] = 'vaw'
 
         else:
-            target['boxes'] = boxes
+            target['masks'] =  masks
+            target['polygons'] =  polygons
+            # target['object_name'] = object_names
+            #target['clip_em'] = clip_embeds
             target['labels'] = obj_classes
             target['pos_att_classes'] = pos_att_classes
             target['id'] = idx
             target['type'] = 'att'
             target['dataset'] = 'vaw'
+            target['img_id'] = img_id
 
             if self._transforms is not None:
                 img, _ = self._transforms(img, None)
 
+            target['boxes'] = boxes
 
         return img, target
 
@@ -162,6 +221,7 @@ class VAWDetection(torch.utils.data.Dataset):
         with open('data/vaw/annotations/head_tail.json','r') as f:
             head_tail = json.load(f)
         with open(anno_file,'r') as f:
+
             annotations= json.load(f)
         self.head,self.medium,self.tail = [],[],[]
         for i in head_tail['head']:
@@ -195,14 +255,16 @@ def make_vaw_transforms(image_set):
         return T.Compose([
             T.RandomHorizontalFlip(),
             T.ColorJitter(.4, .4, .4),
-            T.RandomSelect(
-                T.RandomResize(scales, max_size=1333),
-                T.Compose([
-                    T.RandomResize([400, 500, 600]),
-                    T.RandomSizeCrop(384, 600),
-                    T.RandomResize(scales, max_size=1333),
-                ])
-            ),
+            # T.RandomSelect(
+            # T.RandomResize(scales, max_size=1333)
+            #     T.Compose([
+            #         T.RandomResize([400, 500, 600]),
+            #         T.RandomSizeCrop(384, 600),
+            #         T.RandomResize(scales, max_size=1333),
+            #     ])
+            # )
+            T.RandomResize(scales, max_size=1333)
+            ,
             normalize,
         ])
 
@@ -226,9 +288,9 @@ def build(image_set, args):
     root = Path('data/vaw')
     assert root.exists(), f'provided HOI path {root} does not exist'
     PATHS = {
-        'train': (root / 'images' , root / 'annotations' / 'vaw_orig_train.json'),
-        'val': (root / 'images' , root / 'annotations' / 'vaw_orig_test.json'),
-        'test': (root / 'images' , root / 'annotations' / 'vaw_orig_test.json')
+        'train': (root / 'images' , root / 'annotations' / 'vaw_orig_3_train.json'),
+        'val': (root / 'images' , root / 'annotations' / 'vaw_orig_3_test.json'),
+        'test': (root / 'images' , root / 'annotations' / 'vaw_orig_3_test.json')
     }
 
     # CORRECT_MAT_PATH = root / 'annotations' / 'corre_hico.npy'
