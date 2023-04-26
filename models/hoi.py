@@ -132,7 +132,9 @@ class DETRHOI(nn.Module):
             if not self.training:
                 #for video inference
                 if self.show_vid: 
-                    box_tensors = torch.Tensor([int(0)] + targets.tolist()).unsqueeze(0) # [1,5] : 1 frame 
+                    # import pdb;pdb.set_trace()
+                    # box_tensors = torch.Tensor([int(0)] + targets.tolist()).unsqueeze(0) # [1,5] : 1 frame 
+                    box_tensors = torch.cat([torch.zeros((len(targets),1)),targets],dim=-1)
                     encoder_src = self.input_proj(src)
                     B,C,H,W = encoder_src.shape 
                     encoder_src = encoder_src.flatten(2).permute(2, 0, 1)
@@ -151,7 +153,10 @@ class DETRHOI(nn.Module):
                     x = self.attribute_avgpool(x) 
                     x = torch.flatten(x, 1)
                     outputs_class = self.attribute_class_embed(x)
-                    return outputs_class.sigmoid()
+                    # import pdb;pdb.set_trace()
+                    # out = {'pred_logits':outputs_class,'type': dtype,'dataset':dataset}
+                    out = outputs_class.sigmoid()
+                    return out
             
                 object_boxes = torch.cat([torch.stack([target['boxes'][...,0]/target['orig_size'][1],target['boxes'][...,1]/target['orig_size'][0],target['boxes'][...,2]/target['orig_size'][1],target['boxes'][...,3]/target['orig_size'][0]],axis=1) for target in targets])
                 batch_index = torch.cat([torch.Tensor([int(i)]) for i, target in enumerate(targets) for _ in target['boxes']])

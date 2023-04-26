@@ -227,6 +227,8 @@ def get_args_parser():
     parser.add_argument('--webcam', default='', type=str)
     parser.add_argument('--vis_demo',action='store_true')
     parser.add_argument('--iou_threshold', default=0.9,type=float,help='iou threshold value')
+    parser.add_argument('--attr_threshold', default=0.4,type=float)
+    parser.add_argument('--attr_topk', default=1,type=int)
 
 
     return parser
