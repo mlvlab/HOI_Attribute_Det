@@ -195,9 +195,10 @@ def get_args_parser():
     parser.add_argument('--all', action='store_true',help='check hoi+attribute inference')
     parser.add_argument('--color', action='store_true',help='only color inference for vaw')
     
-    parser.add_argument('--webcam', default='', type=str)
+    parser.add_argument('--webcam', action='store_true')
     parser.add_argument('--vis_demo',action='store_true')
     parser.add_argument('--iou_threshold', default=0.9,type=float,help='iou threshold value')
+    parser.add_argument('--attr_threshold', default=0.5,type=float,help='iou threshold value')
     
     
     return parser

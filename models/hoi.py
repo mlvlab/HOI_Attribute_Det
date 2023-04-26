@@ -181,7 +181,7 @@ class DETRHOI(nn.Module):
                 #self.transformer(self.input_proj(src), mask, self.query_embed.weight, pos[-1])[0].shape : torch.Size([6, 8, 100, 256])
                 #self.transformer(self.input_proj(src), mask, self.query_embed.weight, pos[-1])[1].shape : torch.Size([8, 256, 33, 29])
                 hs = self.transformer(self.input_proj(src), mask, self.query_embed.weight, pos[-1])[0]
-                outputs_sub_coord = self.sub_bbox_embed(hs).sigmoid()
+                
                 outputs_obj_class = self.obj_class_embed(hs)
                 outputs_obj_coord = self.obj_bbox_embed(hs).sigmoid()
                 if 'vaw' in self.inf_type:
@@ -191,22 +191,24 @@ class DETRHOI(nn.Module):
                                   'pred_obj_boxes':outputs_obj_coord[-1],
                                   'type':'att',
                                   'dataset':'vaw'}
-                if 'vcoco' in self.inf_type:
-                    vcoco_outputs_class = self.vcoco_verb_class_embed(hs)
-                    out['vcoco'] = {'pred_logits':vcoco_outputs_class[-1],
-                                    'pred_obj_logits':outputs_obj_class[-1],
-                                    'pred_obj_boxes':outputs_obj_coord[-1],
-                                    'pred_sub_boxes':outputs_sub_coord[-1],
-                                    'type':'hoi',
-                                    'dataset':'vcoco'}
-                if 'hico' in self.inf_type:
-                    hico_outputs_class = self.hico_verb_class_embed(hs)
-                    out['hico'] = {'pred_logits':hico_outputs_class[-1],
-                                    'pred_obj_logits':outputs_obj_class[-1],
-                                    'pred_obj_boxes':outputs_obj_coord[-1],
-                                    'pred_sub_boxes':outputs_sub_coord[-1],
-                                    'type':'hoi',
-                                    'dataset':'hico'}
+                if 'vcoco' in self.inf_type or 'hico' in self.inf_type:
+                    outputs_sub_coord = self.sub_bbox_embed(hs).sigmoid()
+                    if 'vcoco' in self.inf_type:
+                        vcoco_outputs_class = self.vcoco_verb_class_embed(hs)
+                        out['vcoco'] = {'pred_logits':vcoco_outputs_class[-1],
+                                        'pred_obj_logits':outputs_obj_class[-1],
+                                        'pred_obj_boxes':outputs_obj_coord[-1],
+                                        'pred_sub_boxes':outputs_sub_coord[-1],
+                                        'type':'hoi',
+                                        'dataset':'vcoco'}
+                    if 'hico' in self.inf_type:
+                        hico_outputs_class = self.hico_verb_class_embed(hs)
+                        out['hico'] = {'pred_logits':hico_outputs_class[-1],
+                                        'pred_obj_logits':outputs_obj_class[-1],
+                                        'pred_obj_boxes':outputs_obj_coord[-1],
+                                        'pred_sub_boxes':outputs_sub_coord[-1],
+                                        'type':'hoi',
+                                        'dataset':'hico'}
             # import pdb;pdb.set_trace()
             return out
                  
@@ -236,7 +238,8 @@ class DETRHOI(nn.Module):
                     #outputs_class.shape : torch.Size([6, 8, 100, 117])
                     outputs_class = self.hico_verb_class_embed(hs)
                 elif dataset =='vcoco':
-                    outputs_class = self.vcoco_verb_class_embed(hs)            
+                    outputs_class = self.vcoco_verb_class_embed(hs)     
+                import pdb;pdb.set_trace()       
             # else:
             #     if dataset == 'vcoco'
 

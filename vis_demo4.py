@@ -22,11 +22,12 @@ class Demo():
         self.video_path = args.video_file
         self.fps = args.fps
         self.output_dir = 'output_video/'+args.video_file.split('/')[-1]
-        self.cap = cv2.VideoCapture(args.video_file) if not args.webcam else cv2.VideoCapture(1)
+        #self.cap = cv2.VideoCapture(args.video_file) if not args.webcam else cv2.VideoCapture(0)
+        self.cap = cv2.VideoCapture('rtmp://192.168.0.98/live/drone')
         # self.cap = cv2.VideoCapture(1)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        self.fourcc = cv2.VideoWriter_fourcc(*'XVID')
+        #self.fourcc = cv2.VideoWriter_fourcc(*'XVID')
         self.checkpoint = args.checkpoint
         self.frame_num = 0
         self.inf_type = args.inf_type
@@ -403,7 +404,7 @@ class Demo():
         frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         frame_size = (frame_width, frame_height)
         orig_size = torch.as_tensor([frame_height,frame_width]).unsqueeze(0).to('cuda')
-        output_file = cv2.VideoWriter(self.output_dir, self.fourcc, self.fps, frame_size)
+        #output_file = cv2.VideoWriter(self.output_dir, self.fourcc, self.fps, frame_size)
         checkpoint = torch.load(self.checkpoint, map_location=device)
         model.load_state_dict(checkpoint['model'],strict=False)
         model.to(device)
@@ -445,8 +446,8 @@ class Demo():
             self.frame_num += 1
             
         self.cap.release()
-        if args.webcam:
-            output_file.release()
+        #if args.webcam:
+        #   output_file.release()
         cv2.destroyAllWindows()
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('video inference script', parents=[get_args_parser()])
