@@ -4,9 +4,21 @@ params/**
 logs/**
 video/**
 vis/**
+output_json/
 output_video/**
 checkpoints/**
 .venv/
 checkpoint/**
 !.gitkeep
+checkbbox.py
+configs/
+datasets/
+evaluations/
+test_results/
+test_results2/
+wandb/
+numpy_sample/
+feature_vis.py
+samples/
+tmp.py
 

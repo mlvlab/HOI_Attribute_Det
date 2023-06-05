@@ -3,14 +3,16 @@ import torch.utils.data
 import torch
 
 class CombinationDataset(torch.utils.data.DataLoader):
+
     def __init__(self, datasets):
         self.datasets = datasets
+
     def __len__(self):
         return(sum([dataset.__len__() for dataset in self.datasets]))
+
     def __getitem__(self, indicies):
         dataset_idx = indicies[0]
         data_idx = indicies[1]
-        # print(indicies)
         return self.datasets[dataset_idx].__getitem__(data_idx)
 
 class MultiTaskDataLoader(object):
@@ -47,6 +49,7 @@ class MultiTaskDataLoader(object):
     '''
 
     def __init__(self, datasets, batch_size=1, use_all=False, **loading_kwargs):
+        import pdb; pdb.set_trace()
         self.loaders = []
         self.batch_size = batch_size
         self.use_all = use_all

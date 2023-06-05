@@ -17,7 +17,6 @@ import torchvision
 
 import datasets.transforms as T
 
-
 class HICODetection(torch.utils.data.Dataset):
 
     def __init__(self, img_set, img_folder, anno_file, transforms, num_queries):

@@ -58,7 +58,7 @@ class BatchSchedulerSampler(torch.utils.data.sampler.Sampler):
 class ComboBatchSampler(torch.utils.data.sampler.Sampler):
     
     def __init__(self, samplers, batch_size, drop_last):
-        
+
         if not isinstance(batch_size, int) or isinstance(batch_size, bool) or \
                 batch_size <= 0:
             raise ValueError("batch_size should be a positive integer value, "
@@ -72,15 +72,54 @@ class ComboBatchSampler(torch.utils.data.sampler.Sampler):
         self.drop_last = drop_last
         self.dataset_idxs = []
         self.sampler_idxs = []
-        
+        lengths = [len(sampler) for sampler in self.samplers]
+        self.ratio = [round(length / min(lengths)) for length in lengths]
         for i,sampler in enumerate(self.samplers):
             self.sampler_idxs.extend(self.list_chunk([i]*len(sampler),batch_size))
             self.dataset_idxs.extend(self.list_chunk([s_idx for s_idx in sampler],batch_size))
+
         assert len(self.sampler_idxs)==len(self.dataset_idxs)
         idxs = list(range(len(self.sampler_idxs)))
         random.shuffle(idxs)
         self.sampler_idxs = list(np.array(self.sampler_idxs, dtype=object)[idxs])
         self.dataset_idxs = list(np.array(self.dataset_idxs, dtype=object)[idxs])
+        # tmp = []
+        # for i,sampler in enumerate(self.samplers):
+        #     if len(sampler) % batch_size == 0:
+        #         tmp.append((len(sampler) // batch_size))
+        #     else:
+        #         tmp.append((len(sampler) // batch_size)+1) 
+
+        #     self.sampler_idxs.extend(self.list_chunk([i]*len(sampler),batch_size))
+        #     self.dataset_idxs.extend(self.list_chunk([s_idx for s_idx in sampler],batch_size))
+
+        # assert len(self.sampler_idxs)==len(self.dataset_idxs)
+
+        # idxs = list(range(sum(tmp)))
+        # cnt = 0
+        # shuffle = []
+        # idx1 = 0
+        # idx2 = tmp[0]
+        # for idx in idxs:
+
+        #     if idx2 == sum(tmp):
+        #         shuffle += list(range(idx1,idx1+(len(self.sampler_idxs) - len(shuffle))))
+        #         break
+            
+        #     if cnt == self.ratio[1]:
+        #         cnt = 0
+        #         shuffle.append(idx1)
+        #         idx1 += 1
+
+        #     shuffle.append(idx2)
+        #     idx2 += 1
+        #     cnt += 1
+        # print(shuffle[:100])
+        # print(self.ratio)
+        # print(tmp)
+        # exit()
+        # self.sampler_idxs = list(np.array(self.sampler_idxs, dtype=object)[shuffle])
+        # self.dataset_idxs = list(np.array(self.dataset_idxs, dtype=object)[shuffle])
 
     def list_chunk(self,lst, n):
         return [lst[i:i+n] for i in range(0, len(lst), n)]

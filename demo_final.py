@@ -21,8 +21,8 @@ class Demo():
     def __init__(self, args):
         self.video_path = args.video_file
         self.fps = args.fps
-        self.output_dir = 'output_video/'+args.video_file.split('/')[-1]
-        self.cap = cv2.VideoCapture(args.video_file) if not args.webcam else cv2.VideoCapture(1)
+        self.output_dir = args.out_file
+        self.cap = cv2.VideoCapture(args.video_file) if not args.webcam else cv2.VideoCapture(0)
         # self.cap = cv2.VideoCapture(1)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
@@ -41,13 +41,13 @@ class Demo():
             CORRECT_MAT_PATH_HICO = 'data/hico_20160224_det/annotations/corre_hico.npy'
             self.correct_mat_hico = np.load(CORRECT_MAT_PATH_HICO)
             self.correct_mat_hico[[57,36,86,87,76,35,23,24,43,101,8,104,9,15,16,20,44,73,102,58]]=0
-        if 'vaw' in  self.inf_type:
-            attribute_freq = 'data/vaw/annotations/vaw_coco_train_cat_info.json'
-            self.valid_masks = self.valid_att_idxs(attribute_freq)
-            self.valid_masks[[330]]=0
-            if args.color:
-                non_color_index = [i for i in range(self.valid_masks.shape[0])if i not in color_index()]
-                self.valid_masks[non_color_index]=0
+        # if 'vaw' in  self.inf_type:
+        #     attribute_freq = 'data/vaw/annotations/vaw_coco_train_cat_info.json'
+        #     self.valid_masks = self.valid_att_idxs(attribute_freq)
+        #     self.valid_masks[[330]]=0
+        #     if args.color:
+        #         non_color_index = [i for i in range(self.valid_masks.shape[0])if i not in color_index()]
+        #         self.valid_masks[non_color_index]=0
         
         self.topk = args.top_k
         self.count_dict = {}
@@ -58,26 +58,39 @@ class Demo():
             
         self.iou_threshold = args.iou_threshold
         self.attr_threshold = args.attr_threshold
+        self.attr_topk = args.attr_topk
+        
+        self.only_vaw_vis = args.only_vaw_vis
 
     def hoi_att_transforms(self, image_set):
         transforms = make_vcoco_transforms(image_set)
         return transforms
 
-    def inference_for_vid(self, model, frame, args=None):
+    # def inference_for_vid(self, model, frame, args=None):
+    #     img = Image.fromarray(frame)
+    #     transform = self.hoi_att_transforms('val')
+    #     sample = img.copy()
+    #     sample, _ = transform(sample, None)
+    #     dataset = args.inf_type #hico or vcoco or hoi or vaw
+    #     if dataset == 'vaw':
+    #         dtype = 'att'
+    #     else: 
+    #         dtype = 'hoi'
+
+        
+    #     output = model(sample.unsqueeze(0).to(device),dtype,dataset)
+    #     return output
+                
+    def inference_for_vid(self, model, frame, bbox, inf_type, args=None, eval_mode=False):
         img = Image.fromarray(frame)
         transform = self.hoi_att_transforms('val')
         sample = img.copy()
         sample, _ = transform(sample, None)
-        dataset = args.inf_type #hico or vcoco or hoi or vaw
-        if dataset == 'vaw':
-            dtype = 'att'
-        else: 
-            dtype = 'hoi'
-
-        
-        output = model(sample.unsqueeze(0).to(device))
-        return output
-                
+        if inf_type == 'vaw':
+            outputs = model([sample.cuda()],bbox,'att',inf_type,args) #torch.Size([1, 620])
+        elif inf_type == 'vcoco' or inf_type == 'hico': 
+            outputs = model([sample.cuda()],None,'hoi',inf_type,args) 
+        return outputs
 
     def valid_att_idxs(self, anno_file):
         with open(anno_file, 'r') as f:
@@ -91,7 +104,7 @@ class Demo():
         return valid_masks
     
    
-    def change_format(self,results,dataset, args):
+    def change_format(self,results,dataset, args,frame):
 
         
         if dataset in ['vcoco','hico']:
@@ -137,7 +150,23 @@ class Demo():
                 hois = []
             
             self.output_i[dataset]=hois
-
+            if 'vaw' in self.inf_type:
+                num_hoi = len(hois)
+                sub_boxes = np.stack([self.output_i['hoi_box_predictions'][hoi['subject_id']]['bbox'] for hoi in hois])
+                obj_boxes = np.stack([self.output_i['hoi_box_predictions'][hoi['object_id']]['bbox'] for hoi in hois])
+                all_boxes = torch.cat([torch.tensor(sub_boxes),torch.tensor(obj_boxes)])
+                all_att_outputs = self.inference_for_vid(model, frame, all_boxes, 'vaw', args) 
+                all_att_outputs = all_att_outputs.split(num_hoi,0)
+                sub_outputs = all_att_outputs[0]
+                obj_outputs = all_att_outputs[1]
+                for nh in range(num_hoi):
+                    sub_att_score,sub_att_idx = torch.topk(sub_outputs[nh],k=self.attr_topk,dim=-1)
+                    obj_att_score,obj_att_idx = torch.topk(obj_outputs[nh],k=self.attr_topk,dim=-1)
+                    sub_att_idx = sub_att_idx[sub_att_score>=self.attr_threshold].cpu().tolist()
+                    obj_att_idx = obj_att_idx[obj_att_score>=self.attr_threshold].cpu().tolist()
+                    self.output_i[dataset][nh].update({'sub_att_idx':sub_att_idx, 'obj_att_idx':obj_att_idx})
+            
+                # import pdb;pdb.set_trace()
         else:
             if 'obj_box_iou' not in self.output_i:
                 obj_box_iou = box_ops.box_iou(results['boxes'],results['boxes'])
@@ -253,7 +282,7 @@ class Demo():
             # import pdb;pdb.set_trace()
             # print('asdsds')
             
-            
+            # import pdb;pdb.set_trace()
             for predict in output_i['vcoco']:
 
                 #prediction threshold
@@ -266,13 +295,21 @@ class Demo():
                 o_bbox = output_i['hoi_box_predictions'][object_id]['bbox']
                 hoi_class = predict['category_id']
                 hoi_score = predict['score']
+                if 'vaw' in self.inf_type:
+                    sub_attr = predict['sub_att_idx']
+                    obj_attr = predict['obj_att_idx']
+
                 # max_attr_score = predict['max_score']
                 single_out = {'subject_box':np.array(s_bbox),
                               'subject_id':subject_id,
                               'object_box':np.array(o_bbox),
                               'object_id':object_id,
                               'object_label':np.array(o_class), 
-                              'hoi_score':np.array(hoi_score)}
+                              'hoi_score':np.array(hoi_score),
+                             }
+                if 'vaw' in self.inf_type:
+                    single_out.update( {'sub_att_idx':np.array(sub_attr),
+                              'obj_att_idx':np.array(obj_attr)})
                 # list_predictions.append(single_out)
                 if subject_id not in hoi_subject_list_vis:
                     
@@ -299,27 +336,79 @@ class Demo():
                 else:
                     hoi_subject_list_vis[subject_id]+=1
                 print(f'drawing hoi boxes')
-                text = self.index_2_cat(hoi_class,'vcoco')
-                text_size, BaseLine=cv2.getTextSize(text,cv2.FONT_HERSHEY_SIMPLEX,1,2)
+                if not self.only_vaw_vis:
+                    text = self.index_2_cat(hoi_class,'vcoco')
+                    text_size, BaseLine=cv2.getTextSize(text,cv2.FONT_HERSHEY_SIMPLEX,1,2)
 
-                #text height for multiple attributes
-                text_size_y = text_size[1] +5
-                cnt = hoi_subject_list_vis[subject_id]
-                # for attr in attributes[0]:
-                
+                    #text height for multiple attributes
+                    text_size_y = text_size[1] +5
+                    cnt = hoi_subject_list_vis[subject_id]
+                    # for attr in attributes[0]:
                     
+                        
+                        
+                    # text_size, BaseLine=cv2.getTextSize(text,cv2.FONT_HERSHEY_SIMPLEX,1,2)
+                    # if o_bbox[1]-cnt*text_size_y < 0 or o_bbox[0] < 0:
+                    #     break
                     
-                # text_size, BaseLine=cv2.getTextSize(text,cv2.FONT_HERSHEY_SIMPLEX,1,2)
-                # if o_bbox[1]-cnt*text_size_y < 0 or o_bbox[0] < 0:
-                #     break
-                
-                text_box = [s_bbox[0], s_bbox[1]-cnt*text_size_y, s_bbox[0]+text_size[0],s_bbox[1]-(cnt-1)*text_size_y]
+                    text_box = [s_bbox[0], s_bbox[1]-cnt*text_size_y, s_bbox[0]+text_size[0],s_bbox[1]-(cnt-1)*text_size_y]
 
-                #draw text
-                vis_img = cv2.rectangle(vis_img, (int(text_box[0]),int(text_box[1])),(int(text_box[2]),int(text_box[3])), color_dict[int(o_class)], -1)
-                vis_img = cv2.putText(vis_img, text, (int(text_box[0]),int(text_box[3])),cv2.FONT_HERSHEY_SIMPLEX,1,(255,255,255),2,cv2.LINE_AA,False)
-                print('drawing vcoco action box') 
-                print(f'action : {text}')
+                    #draw text
+                    vis_img = cv2.rectangle(vis_img, (int(text_box[0]),int(text_box[1])),(int(text_box[2]),int(text_box[3])), color_dict[int(o_class)], -1)
+                    vis_img = cv2.putText(vis_img, text, (int(text_box[0]),int(text_box[3])),cv2.FONT_HERSHEY_SIMPLEX,1,(255,255,255),2,cv2.LINE_AA,False)
+                    print('drawing vcoco action box') 
+                    print(f'action : {text}')
+                # topk = 0
+                if 'vaw' in self.inf_type:
+                    for ind,(sa,oa) in enumerate(zip(sub_attr,obj_attr)):
+                        # sub_text_size, BaseLine=cv2.getTextSize(self.index_2_cat(sa,'vaw'),cv2.FONT_HERSHEY_SIMPLEX,1,2)
+                        obj_text_size, BaseLine=cv2.getTextSize(self.index_2_cat(oa,'vaw'),cv2.FONT_HERSHEY_SIMPLEX,1,2)
+
+                        #text height for multiple attributes
+                        text_size_y = obj_text_size[1] 
+                        # cnt = object_list_vis[object_id]
+                        # for attr in attributes[0]:
+                        
+                            
+                        text = self.index_2_cat(oa,'vaw')
+                            
+                        text_size, BaseLine=cv2.getTextSize(text,cv2.FONT_HERSHEY_SIMPLEX,1,2)
+                        # if o_bbox[1]-cnt*text_size_y < 0 or o_bbox[0] < 0:
+                        #     break
+                        
+                        text_obj_box = [o_bbox[2]-text_size[0], o_bbox[1]-(ind+1)*text_size_y, o_bbox[2],o_bbox[1]-(ind)*text_size_y]
+
+                        #draw text
+                        vis_img = cv2.rectangle(vis_img, (int(text_obj_box[0]),int(text_obj_box[1])),(int(text_obj_box[2]),int(text_obj_box[3])), color_dict[int(o_class)], -1)
+                        vis_img = cv2.putText(vis_img, text, (int(text_obj_box[0]),int(text_obj_box[3])),cv2.FONT_HERSHEY_SIMPLEX,1,(255,255,255),2,cv2.LINE_AA,False)
+                        print('drawing object attribute') 
+                        print(f'obj attribute : {text}')    
+
+                        sub_text_size, BaseLine=cv2.getTextSize(self.index_2_cat(sa,'vaw'),cv2.FONT_HERSHEY_SIMPLEX,1,2)
+
+                        #text height for multiple attributes
+                        text_size_y = sub_text_size[1] 
+                        # cnt = object_list_vis[object_id]
+                        # for attr in attributes[0]:
+                        
+                            
+                        text = self.index_2_cat(sa,'vaw')
+                            
+                        text_size, BaseLine=cv2.getTextSize(text,cv2.FONT_HERSHEY_SIMPLEX,1,2)
+                        # if o_bbox[1]-cnt*text_size_y < 0 or o_bbox[0] < 0:
+                        #     break
+                        
+                        text_subj_box = [s_bbox[2]-text_size[0], s_bbox[1]-(ind+1)*text_size_y, s_bbox[2],s_bbox[1]-(ind)*text_size_y]
+
+                        #draw text
+                        vis_img = cv2.rectangle(vis_img, (int(text_subj_box[0]),int(text_subj_box[1])),(int(text_subj_box[2]),int(text_subj_box[3])), color_dict[0], -1)
+                        vis_img = cv2.putText(vis_img, text, (int(text_subj_box[0]),int(text_subj_box[3])),cv2.FONT_HERSHEY_SIMPLEX,1,(255,255,255),2,cv2.LINE_AA,False)
+                        
+                        print('drawing subject attribute') 
+                        print(f'sub attribute : {text}')   
+                        # if ind == self.attr_topk-1:
+                        #     break
+                   
         
         if 'hico' in output_i:
             # import pdb;pdb.set_trace()
@@ -406,6 +495,7 @@ class Demo():
         output_file = cv2.VideoWriter(self.output_dir, self.fourcc, self.fps, frame_size)
         checkpoint = torch.load(self.checkpoint, map_location=device)
         model.load_state_dict(checkpoint['model'],strict=False)
+        # model.load_state_dict(checkpoint['model'])
         model.to(device)
         model.eval()
         # import pdb;pdb.set_trace()
@@ -417,21 +507,27 @@ class Demo():
             frame = cv2.flip(frame,1)
             if not retval:
                 break
-            
-            outputs = self.inference_for_vid(model, frame, args)
+            hoi_outputs = self.inference_for_vid(model, frame, None, 'vcoco', args)
+            # outputs = self.inference_for_vid(model, frame, args)
             preds = []
-            if 'hico' in outputs:
-                results_hico = postprocessors(outputs['hico'], orig_size)
-                preds=list(itertools.chain.from_iterable(utils.all_gather(results_hico)))
-                self.change_format(preds[0],'hico', args)
-            if 'vcoco' in outputs:
-                results_vcoco = postprocessors(outputs['vcoco'], orig_size)
-                preds=list(itertools.chain.from_iterable(utils.all_gather(results_vcoco)))
-                self.change_format(preds[0],'vcoco', args)
-            if 'vaw' in outputs:
-                results_vaw = postprocessors(outputs['vaw'], orig_size)
-                preds=list(itertools.chain.from_iterable(utils.all_gather(results_vaw)))
-                self.change_format(preds[0],'vaw', args)
+            # if 'hico' in hoi_outputs:
+            #     results_hico = postprocessors(hoi_outputs['hico'], orig_size)
+            #     preds=list(itertools.chain.from_iterable(utils.all_gather(results_hico)))
+            #     self.change_format(preds[0],'hico', args)
+            # if 'vcoco' in hoi_outputs:
+            results_vcoco = postprocessors(hoi_outputs, orig_size)
+            preds=list(itertools.chain.from_iterable(utils.all_gather(results_vcoco)))
+            self.change_format(preds[0],'vcoco', args, frame)
+            # if 'vaw' in self.inf_type:
+            #     # import pdb;pdb.set_trace()
+
+            #     sub_attr = self.inference_for_vid(model, frame, sub_boxes, 'vaw', args)
+            #     o_attr = self.inference_for_vid(model, frame, obj_boxes, 'vaw', args)
+
+            #     results_vaw = postprocessors(hoi_outputs['vaw'], orig_size)
+            #     preds=list(itertools.chain.from_iterable(utils.all_gather(results_vaw)))
+            #     self.change_format(preds[0],'vaw', args)
+            
            
             vis_img = self.draw_img_all(frame,self.output_i,threshold=args.threshold,color_dict=self.color_,inf_type=args.inf_type)
             self.output_i = {}
@@ -440,6 +536,8 @@ class Demo():
                 cv2.imshow('Online Demo',vis_img)
                 if cv2.waitKey(1)==27:
                     break
+                output_file.write(vis_img)
+                
             else:
                 output_file.write(vis_img)
             self.frame_num += 1
