@@ -266,7 +266,7 @@ python vis_demo2.py \
         --all
 ```         -->
 
-## Citation
+## Acknowledgement
 Our implementation is based on the official code [QPIC](https://github.com/hitachi-rd-cv/qpic)
 ```
 @inproceedings{tamura_cvpr2021,
