@@ -121,50 +121,64 @@ python convert_parameters.py \
 
 
 
-# Training
+## Training
 
-## For single task training
+### For HOI classifier training  
 ```
-CUDA_VISIBLE_DEVICES=1,2 GPUS_PER_NODE=2 ./tool/run_dist_launch.sh 2 configs/mtl_train.sh \
-        --mtl_data [\'vaw\'] \
-        --output_dir checkpoints/vaw \
-        --pretrained params/detr-r50-pre-vaw.pth
+CUDA_VISIBLE_DEVICES=0,1 GPUS_PER_NODE=2 ./tool/run_dist_launch.sh 2 configs/mtl_train.sh \
+	--mtl_data [\'hico\',\'vcoco\'] \
+	--output_dir checkpoints/vcoco_hico/ \
+	--pretrained params/detr-r50-pre-mtl.pth \
+	--br \
+	--att_loss_coef 0 \
+	--epochs 90 \
+ 	--lr_drop 60 
 ```  
 
-## For multi task training
+### For Attribute classifier training
 ```
-CUDA_VISIBLE_DEVICES=1,2 GPUS_PER_NODE=2 ./tool/run_dist_launch.sh 2 configs/mtl_train.sh \
-        --mtl_data [\'vcoco\',\'hico\',\'vaw\'] \
-        --output_dir checkpoints/mtl_all \
-        --pretrained params/detr-r50-pre-mtl.pth
+CUDA_VISIBLE_DEVICES=0,1 GPUS_PER_NODE=2 ./tool/run_dist_launch.sh 2 configs/mtl_train.sh \
+        --mtl_data [\'vaw\'] \
+        --output_dir checkpoints/hoi_att/ \
+        --pretrained checkpoints/version5/vcoco_hico/checkpoint.pth
+        --freeze_hoi \
+        --epochs 30 \
+        --lr_drop 20
 ``` 
 
-# Evaluation
+## Evaluation
 
-## Multi task learning evaluation
+### HOI + ATT evaluation command
 ```
-configs/mtl_eval.sh \
-        --pretrained checkpoints/mtl_all/checkpoint.pth \
-        --output_dir test_results/ \
-        --mtl_data [\'vcoco\',\'hico\',\'vaw\']
-```
-
-## vcoco evaluation
-```
-"test_mAP_all": 0.5455718251429631, "test_mAP_thesis": 0.5663461447990525
-```
-## hico evaluation
-```
-"test_mAP": 0.27877264960450454, "test_mAP rare": 0.20416854381834068, "test_mAP non-rare": 0.30105699289128085, "test_mean max recall": 0.6536133057960736
-```
-## vaw evaluation
-```
-"test_mAP": 0.0524253535493328, "test_mAP rare": 0.029776368059209662, "test_mAP non-rare": 0.07093753803669373, "test_mean max recall": 0.37233911507467743
+CUDA_VISIBLE_DEVICES=0 configs/mtl_eval.sh \
+        --pretrained checkpoints/hoi_att/checkpoint.pth \
+        --output_dir test_results/hoi_att/ \
+        --mtl_data [\'hico\',\'vcoco\',\'vaw\']
 ```
 
-# Video demo version 1
+#### vcoco evaluation results 
+```
+"test_mAP_all": 0.5613568582747551, "test_mAP_thesis": 0.5843414931315771
+```
+
+#### hico evaluation results
+```
+"test_mAP": 0.279366822517764, "test_mAP rare": 0.21431380829063984, "test_mAP non-rare": 0.2987982423518401, "test_mean max recall": 0.656295577526744
+```
+
+#### vaw evaluation results
+```
+"test_mAP_all": 0.448491564897126, "test_mAP_head": 0.5077881920602825, "test_mAP_medium": 0.4351269222618499, "test_mAP_tail": 0.2618922747534062
+```
+
+### checkpoint & vaw annotation files
+https://drive.google.com/drive/folders/1ASQWFCUg3u3ebO8fexRc5mW6nv6l9eGa?usp=sharing
+
+
+
+## Video demo version 1
 ![cycle2](https://user-images.githubusercontent.com/87055052/208564990-197d157c-c830-4cae-9557-9d7900f1b8c6.gif)
-## For vcoco verb inference
+### For vcoco verb inference
 ```
 python vis_demo.py \
         --checkpoint checkpoints/mtl_all/checkpoint.pth \
@@ -178,7 +192,7 @@ python vis_demo.py \
         --fps 30
 ```  
 
-## For hico verb inference
+### For hico verb inference
 ```
 python vis_demo.py \
         --checkpoint checkpoints/mtl_all/checkpoint.pth \
@@ -192,7 +206,7 @@ python vis_demo.py \
         --fps 30
 ``` 
 
-## For hoi inference (hico verb + vcoco verb) 
+### For hoi inference (hico verb + vcoco verb) 
 ```
 python vis_demo.py \
         --checkpoint checkpoints/mtl_all/checkpoint.pth \
@@ -206,7 +220,7 @@ python vis_demo.py \
         --fps 30
 ``` 
 
-## For vaw attribute inference
+### For vaw attribute inference
 ```
 python vis_demo.py \
         --checkpoint checkpoints/mtl_all/checkpoint.pth \
@@ -220,7 +234,7 @@ python vis_demo.py \
         --fps 30
 ```  
 
-## For vaw color inference
+### For vaw color inference
 ```
 python vis_demo.py \
         --checkpoint checkpoints/mtl_all/checkpoint.pth \
@@ -235,10 +249,10 @@ python vis_demo.py \
         --color
 ```  
 
-# Video demo version 2 
+## Video demo version 2 
 ![cycle](https://user-images.githubusercontent.com/87055052/208564037-b6054ccd-bc28-41ea-bc77-ce1195a19f33.gif)
 
-## For hoi+attribute inference
+### For hoi+attribute inference
 ```
 python vis_demo2.py \
         --checkpoint checkpoints/mtl_all/checkpoint.pth \
@@ -252,6 +266,7 @@ python vis_demo2.py \
         --fps 30 \
         --all
 ```        
+
 ## Citation
 Our implementation is based on the official code QPIC
 ```
