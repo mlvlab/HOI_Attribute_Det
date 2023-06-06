@@ -294,7 +294,7 @@ def build(image_set, args):
     }
 
     # CORRECT_MAT_PATH = root / 'annotations' / 'corre_hico.npy'
-    attribute_freq = root / 'annotations' / 'vaw_orig_train_cat_info.json'
+    # attribute_freq = root / 'annotations' / 'vaw_orig_train_cat_info.json'
     attribute_index = root / 'annotations' / 'attribute_index.json'    
 
     img_folder, anno_file = PATHS[image_set]
@@ -302,8 +302,8 @@ def build(image_set, args):
                             num_queries=args.num_queries)
     if image_set == 'val' or image_set == 'test':
             
-        dataset.set_rare_attrs(attribute_freq)
-        dataset._valid_att_idxs(attribute_freq)
+        # dataset.set_rare_attrs(attribute_freq)
+        # dataset._valid_att_idxs(attribute_freq)
         dataset.set_class_imb_attrs(attribute_index)
         
     return dataset
