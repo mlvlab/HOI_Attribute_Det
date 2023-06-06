@@ -174,7 +174,7 @@ CUDA_VISIBLE_DEVICES=0 configs/mtl_eval.sh \
 https://drive.google.com/drive/folders/1ASQWFCUg3u3ebO8fexRc5mW6nv6l9eGa?usp=sharing
 
 
-
+<!-- 
 ## Video demo version 1
 ![cycle2](https://user-images.githubusercontent.com/87055052/208564990-197d157c-c830-4cae-9557-9d7900f1b8c6.gif)
 ### For vcoco verb inference
@@ -264,7 +264,7 @@ python vis_demo2.py \
         --threshold 0.4 \
         --fps 30 \
         --all
-```        
+```         -->
 
 ## Citation
 Our implementation is based on the official code [QPIC](https://github.com/hitachi-rd-cv/qpic)
