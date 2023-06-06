@@ -64,9 +64,8 @@ neubla_hoi_att
  |       |       :
  |       |─ annotations
  |       |   |─ attribute_index.json
- |       |   |─ vaw_coco_train.json
- |       |   |─ vaw_coco_test.json
- |       |   |─ vaw_coco_train_cat_info.json
+ |       |   |─ vaw_train.json
+ |       |   |─ vaw_test.json
  :       :   :
 ```
 
