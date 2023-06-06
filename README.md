@@ -267,7 +267,7 @@ python vis_demo2.py \
 ```        
 
 ## Citation
-Our implementation is based on the official code QPIC
+Our implementation is based on the official code [QPIC](https://github.com/hitachi-rd-cv/qpic)
 ```
 @inproceedings{tamura_cvpr2021,
 author = {Tamura, Masato and Ohashi, Hiroki and Yoshinaga, Tomoaki},
@@ -276,3 +276,6 @@ booktitle={CVPR},
 year = {2021},
 }
 ```
+
+## License
+This project is open sourced under Apache License 2.0, see LICENSE.
