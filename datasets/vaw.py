@@ -288,9 +288,9 @@ def build(image_set, args):
     root = Path('data/vaw')
     assert root.exists(), f'provided HOI path {root} does not exist'
     PATHS = {
-        'train': (root / 'images' , root / 'annotations' / 'vaw_orig_3_train.json'),
-        'val': (root / 'images' , root / 'annotations' / 'vaw_orig_3_test.json'),
-        'test': (root / 'images' , root / 'annotations' / 'vaw_orig_3_test.json')
+        'train': (root / 'images' , root / 'annotations' / 'vaw_train.json'),
+        'val': (root / 'images' , root / 'annotations' / 'vaw_test.json'),
+        'test': (root / 'images' , root / 'annotations' / 'vaw_test.json')
     }
 
     # CORRECT_MAT_PATH = root / 'annotations' / 'corre_hico.npy'
