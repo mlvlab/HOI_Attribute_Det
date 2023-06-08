@@ -21,6 +21,10 @@ Instead of using the original annotations files, we use the annotation files pro
 #### V-COCO
 First clone the repository of V-COCO from [here](https://github.com/s-gupta/v-coco), and then follow the instruction to generate the file `instances_vcoco_all_2014.json`. Next, download the prior file `prior.pickle` from [here](https://drive.google.com/drive/folders/10uuzvMUCVVv95-xAZg5KS94QXm7QXZW4). Place the files and make directories as follows.
 
+#### VAW
+The images can be downloaded from the [Visual Genome](https://visualgenome.org/) website, and annotation files can be downloaded from the [GoogleDrive](https://drive.google.com/drive/folders/1ASQWFCUg3u3ebO8fexRc5mW6nv6l9eGa?usp=sharing). Place the files as follows.
+
+
 ```
 neubla_hoi_att
  |─ data
@@ -170,9 +174,17 @@ CUDA_VISIBLE_DEVICES=0 configs/mtl_eval.sh \
 "test_mAP_all": 0.448491564897126, "test_mAP_head": 0.5077881920602825, "test_mAP_medium": 0.4351269222618499, "test_mAP_tail": 0.2618922747534062
 ```
 
-### checkpoint & vaw annotation files
-https://drive.google.com/drive/folders/1ASQWFCUg3u3ebO8fexRc5mW6nv6l9eGa?usp=sharing
+### checkpoint
 
+We provide checkpoint for the model trained on the task for HOI and HOI + ATT in the [GoogleDrive](https://drive.google.com/drive/folders/1ASQWFCUg3u3ebO8fexRc5mW6nv6l9eGa?usp=sharing).
+
+## Demo
+
+We also provide live demo for both HOI detection and attribute classification for detected human and boxes.
+Its command is as follows.
+```
+python demo_final.py --checkpoint checkpoint/checkpoint.pth --inf_type ['vcoco','vaw'] --mtl_data ['vcoco','vaw'] --mtl --webcam  True --show_vid --vis_demo --top_k 10 --threshold 0.4 --fps 30
+```
 
 <!-- 
 ## Video demo version 1
