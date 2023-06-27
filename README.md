@@ -143,7 +143,7 @@ CUDA_VISIBLE_DEVICES=0,1 GPUS_PER_NODE=2 ./tool/run_dist_launch.sh 2 configs/mtl
 CUDA_VISIBLE_DEVICES=0,1 GPUS_PER_NODE=2 ./tool/run_dist_launch.sh 2 configs/mtl_train.sh \
         --mtl_data [\'vaw\'] \
         --output_dir checkpoints/hoi_att/ \
-        --pretrained checkpoints/version5/vcoco_hico/checkpoint.pth
+        --pretrained checkpoints/vcoco_hico/checkpoint.pth
         --freeze_hoi \
         --epochs 30 \
         --lr_drop 20
