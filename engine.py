@@ -170,50 +170,7 @@ def evaluate_hoi_att(dataset_file, model, postprocessors, data_loader, subject_c
     header = 'Test:'
     preds = []
     gts = []
-    dataset_name = os.fspath(data_loader.dataset.img_folder)
-
-    # if 'vaw' in dataset_name:
-    #     for samples, targets in metric_logger.log_every(data_loader, 10, header):
-    #         dtype = targets[0]['type'] 
-    #         dataset=targets[0]['dataset'] 
-    #         samples = samples.to(device)
-    #         outputs = model(samples,targets,dtype,dataset,args)['pred_logits'].sigmoid()    
-    #         preds.extend(outputs.detach().cpu().numpy())
-        
-    #     preds = np.array(preds) #(31819, 620)
-    #     annos = np.load(args.vaw_gts) #(31819, 620)
-
-    #     evaluator = Evaluator(
-    #         args.fpath_attribute_index, args.fpath_attribute_types,
-    #         args.fpath_attribute_parent_types, args.fpath_head_tail)
-        
-    #     scores_overall, scores_per_class = evaluator.evaluate(preds, annos)
-    #     scores_overall_topk, scores_per_class_topk = evaluator.evaluate(
-    #         preds, annos, threshold_type='topk')
-
-    #     CATEGORIES = ['all', 'head', 'medium', 'tail', 'color', 'material', 'shape', 'size', 'action', 'state', 'texture', 'other'] + list(evaluator.attribute_parent_type.keys())
-    #     stats = {}
-    #     for category in CATEGORIES:
-    #         stats['mAP_'+category] = scores_per_class[category]['ap']
-
-    #         #per class
-    #         stats['precision_'+category] = scores_per_class[category]['precision']
-
-    #         #top_k score
-    #         stats['topk_precision_'+category] = scores_per_class_topk[category]['precision']
-
-    #     with open(args.output_dir+'/class_AP.txt', 'w') as f:
-    #         f.write('| {:<18}| AP\t\t| Recall@K\t| B.Accuracy\t| N_Pos\t| N_Neg\t|\n'.format('Name'))
-    #         f.write('-----------------------------------------------------------------------------------------------------\n')
-    #         for i_class in range(evaluator.n_class):
-    #             att = evaluator.idx2attr[i_class]
-    #             f.write('| {:<18}| {:.4f}\t| {:.4f}\t| {:.4f}\t\t| {:<6}| {:<6}|\n'.format(
-    #                 att,
-    #                 evaluator.get_score_class(i_class).ap))
-
-    #     return stats, dataset_name
-
-    
+    dataset_name = os.fspath(data_loader.dataset.img_folder)    
     if 'hico' in dataset_name or 'v-coco' in dataset_name:
         for samples, targets in metric_logger.log_every(data_loader, 10, header):
             dtype = targets[0]['type'] 
