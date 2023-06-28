@@ -10,7 +10,6 @@ if __name__ == '__main__':
     parser.add_argument('--train_part1', default='data/vaw/annotations/train_part1.json')
     parser.add_argument('--val', default='data/vaw/annotations/val.json')
     parser.add_argument('--test', default='data/vaw/annotations/test.json')
-    
     parser.add_argument('--vg_img_data', default='data/vaw/annotations/image_data.json')
     parser.add_argument('--out_path', default='data/vaw/annotations/vaw.json')
     parser.add_argument('--preprocess_annotations', default=True)
@@ -29,7 +28,6 @@ if __name__ == '__main__':
     coco_object_valid = [i['name'] for i in coco['categories']]
     coco_categories = coco['categories']
     
-    # img_ids = [i['image_id'] for i in image]
     def process(items):
         imgs = {}
         i=items['id']
@@ -41,7 +39,6 @@ if __name__ == '__main__':
         pos_att_id,neg_att_id = [],[]
         category_id = []
         for id in img_dict:
-            # import pdb;pdb.set_trace()
             obj_id = next((item['id'] for item in coco_categories if item["name"] == id['object_name']),None)
             if obj_id is None:
                 continue

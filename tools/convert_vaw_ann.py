@@ -8,7 +8,7 @@ if __name__ == '__main__':
     parser.add_argument('--att_index_ann', default='data/vaw/annotations/attribute_index.json')
     parser.add_argument('--train_part1', default='data/vaw/annotations/train_part1.json')
     parser.add_argument('--train_part2', default='data/vaw/annotations/train_part2.json')
-    #parser.add_argument('--val', default='data/vaw/annotations/val.json')
+    parser.add_argument('--val', default='data/vaw/annotations/val.json')
     parser.add_argument('--test', default='data/vaw/annotations/test.json')    
     parser.add_argument('--vg_img_data', default='data/vaw/annotations/image_data.json')
     parser.add_argument('--out_path', default='data/vaw/annotations/vaw.json')    
@@ -16,10 +16,10 @@ if __name__ == '__main__':
     attribute = json.load(open(args.att_index_ann,'r'))
     vg_image= json.load(open(args.vg_img_data,'r'))
     split_dict = {'train': (json.load(open(args.train_part1,'r')),json.load(open(args.train_part2,'r'))),
-                    #'val':(json.load(open(args.val,'r')),),
+                    'val':(json.load(open(args.val,'r')),),
                     'test': (json.load(open(args.test,'r')),),
                 }
-    split = ['train','test']    
+    split = ['train','val','test']    
     def process(items):
         imgs = {}
         i=items['id']
@@ -63,4 +63,4 @@ if __name__ == '__main__':
         with Pool(32) as p:
             images = list(tqdm(p.imap(process, items), total=len(items)))
             print('DONE')
-        json.dump(list(filter(None,images)), open(args.out_path[:-5]+'_2_'+sp+'.json', 'w'))
+        json.dump(list(filter(None,images)), open(args.out_path[:-5]+'_'+sp+'.json', 'w'))

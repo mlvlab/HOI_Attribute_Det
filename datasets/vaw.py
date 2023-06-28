@@ -69,7 +69,7 @@ class VAWDetection(torch.utils.data.Dataset):
         boxes = torch.as_tensor(img_anno['boxes'], dtype=torch.float32).reshape(-1, 4)
 
 
--        mask_list = []
+        mask_list = []
         for polygon in img_anno['instance_polygon']:
             if polygon is not None:
                 mask = torch.from_numpy(polygon2mask((w,h),polygon[0]).transpose()).unsqueeze(0)
@@ -85,7 +85,7 @@ class VAWDetection(torch.utils.data.Dataset):
         #     if polygon is None:
         #         torch.ones
 
-        object_names = img_anno['object_name']
+        #object_names = img_anno['object_name']
         #clip_embeds = torch.tensor(img_anno['clip_em'])
 
         if self.img_set == 'train':
@@ -126,7 +126,7 @@ class VAWDetection(torch.utils.data.Dataset):
             neg_att_classes = neg_att_classes[keep]
             target['masks'] = masks[keep]
             #target['polygons'] =  polygons
-            target['object_name'] = object_names
+            #target['object_name'] = object_names
             #target['clip_em'] = clip_embeds[keep]
             target['labels'] = obj_classes
             target['pos_att_classes'] = pos_att_classes
