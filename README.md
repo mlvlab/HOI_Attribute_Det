@@ -70,6 +70,11 @@ neubla_hoi_att
  |       |   |─ attribute_index.json
  |       |   |─ vaw_train.json
  |       |   |─ vaw_test.json
+ |       |   |─ vaw_train_cat_info.json
+ |       |   |─ vaw_train_cat_info.json
+ |       |   |─ head_tail.json
+ |       |   |─ attribute_types.json
+ |       |   |─ attribute_parent_types.json
  :       :   :
 ```
 
@@ -87,8 +92,7 @@ V-COCO annotations with the HOIA format, `corre_vcoco.npy`, `test_vcoco.json`, a
 
 To get vaw_train.json, vaw_val.json, vaw_test.json, vaw_train_cat_info.json, please run the following commands.
 ```
-python tools/convert_vaw_ann.py
-python tools/get_vaw_cat_info.py
+python tools/convert_vaw_ann_coco.py && python tools/convert_vaw_ann.py && python tools/get_vaw_cat_info.py
 ```
 
 ### Pre-trained parameters
