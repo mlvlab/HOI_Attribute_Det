@@ -226,12 +226,6 @@ def evaluate_hoi_att(dataset_file, model, postprocessors, data_loader, subject_c
         for category in CATEGORIES:
             stats['mAP_'+category] = scores_per_class[category]['ap']
 
-            #per class
-            stats['precision_'+category] = scores_per_class[category]['precision']
-
-            #top_k score
-            stats['topk_precision_'+category] = scores_per_class_topk[category]['precision']
-
         with open(args.output_dir+'/class_AP.txt', 'w') as f:
             f.write('| {:<18}| AP\t\t|\n'.format('Name'))
             f.write('-----------------------------------------------------------------------------------------------------\n')
