@@ -73,7 +73,6 @@ neubla_hoi_att
  :       :   :
 ```
 
-
 For our implementation, the annotation file have to be converted to the HOIA format. The conversion can be conducted as follows.
 ```
 PYTHONPATH=data/v-coco \
@@ -85,6 +84,12 @@ PYTHONPATH=data/v-coco \
 Note that only Python2 can be used for this conversion because `vsrl_utils.py` in the v-coco repository shows a error with Python3.
 
 V-COCO annotations with the HOIA format, `corre_vcoco.npy`, `test_vcoco.json`, and `trainval_vcoco.json` will be generated to `annotations` directory.
+
+To get vaw_train.json, vaw_val.json, vaw_test.json, vaw_train_cat_info.json, please run the following commands.
+```
+python tools/convert_vaw_ann.py
+python tools/get_vaw_cat_info.py
+```
 
 ### Pre-trained parameters
 Our QPIC have to be pre-trained with the COCO object detection dataset. For the HICO-DET training, this pre-training can be omitted by using the parameters of DETR. The parameters can be downloaded from [here](https://dl.fbaipublicfiles.com/detr/detr-r50-e632da11.pth) for the ResNet50 backbone, and [here](https://dl.fbaipublicfiles.com/detr/detr-r101-2c7b67e5.pth) for the ResNet101 backbone. For the V-COCO training, this pre-training has to be carried out because some images of the V-COCO evaluation set are contained in the training set of DETR. You have to pre-train QPIC without those overlapping images by yourself for the V-COCO evaluation.
