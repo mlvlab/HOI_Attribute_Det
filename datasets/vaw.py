@@ -288,23 +288,23 @@ def build(image_set, args):
     root = Path('data/vaw')
     assert root.exists(), f'provided HOI path {root} does not exist'
     PATHS = {
-        'train': (root / 'images' , root / 'annotations' / 'vaw_orig_3_train.json'),
-        'val': (root / 'images' , root / 'annotations' / 'vaw_orig_3_test.json'),
-        'test': (root / 'images' , root / 'annotations' / 'vaw_orig_3_test.json')
+        'train': (root / 'images' , root / 'annotations' / 'vaw_train.json'),
+        'val': (root / 'images' , root / 'annotations' / 'vaw_test.json'),
+        'test': (root / 'images' , root / 'annotations' / 'vaw_test.json')
     }
 
     # CORRECT_MAT_PATH = root / 'annotations' / 'corre_hico.npy'
-    attribute_freq = root / 'annotations' / 'vaw_orig_train_cat_info.json'
+    # attribute_freq = root / 'annotations' / 'vaw_orig_train_cat_info.json'
     attribute_index = root / 'annotations' / 'attribute_index.json'    
 
     img_folder, anno_file = PATHS[image_set]
     dataset = VAWDetection(image_set, img_folder, anno_file,attribute_index, transforms=make_vaw_transforms(image_set),
                             num_queries=args.num_queries)
-    if image_set == 'val' or image_set == 'test':
+    #if image_set == 'val' or image_set == 'test':
             
-        dataset.set_rare_attrs(attribute_freq)
-        dataset._valid_att_idxs(attribute_freq)
-        dataset.set_class_imb_attrs(attribute_index)
+        #dataset.set_rare_attrs(attribute_freq)
+        #dataset._valid_att_idxs(attribute_freq)
+        #dataset.set_class_imb_attrs(attribute_index)
         
     return dataset
 
