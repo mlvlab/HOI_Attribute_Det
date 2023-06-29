@@ -5,7 +5,7 @@ import itertools
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ann", default='data/vaw/annotations/vaw_coco_train.json')
+    parser.add_argument("--ann", default='data/vaw/annotations/vaw_train.json')
     parser.add_argument("--ann_idx", default='data/vaw/annotations/attribute_index.json')
     parser.add_argument("--add_freq", action='store_true')
     parser.add_argument("--r_thresh", type=int, default=10)
