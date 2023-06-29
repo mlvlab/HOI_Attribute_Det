@@ -21,6 +21,10 @@ Instead of using the original annotations files, we use the annotation files pro
 #### V-COCO
 First clone the repository of V-COCO from [here](https://github.com/s-gupta/v-coco), and then follow the instruction to generate the file `instances_vcoco_all_2014.json`. Next, download the prior file `prior.pickle` from [here](https://drive.google.com/drive/folders/10uuzvMUCVVv95-xAZg5KS94QXm7QXZW4). Place the files and make directories as follows.
 
+#### VAW
+The images can be downloaded from the [Visual Genome](https://visualgenome.org/) website, and annotation files can be downloaded from the [GoogleDrive](https://drive.google.com/drive/folders/1ASQWFCUg3u3ebO8fexRc5mW6nv6l9eGa?usp=sharing). Place the files as follows.
+
+
 ```
 neubla_hoi_att
  |─ data
@@ -64,12 +68,15 @@ neubla_hoi_att
  |       |       :
  |       |─ annotations
  |       |   |─ attribute_index.json
- |       |   |─ vaw_coco_train.json
- |       |   |─ vaw_coco_test.json
- |       |   |─ vaw_coco_train_cat_info.json
+ |       |   |─ vaw_train.json
+ |       |   |─ vaw_test.json
+ |       |   |─ vaw_train_cat_info.json
+ |       |   |─ vaw_train_cat_info.json
+ |       |   |─ head_tail.json
+ |       |   |─ attribute_types.json
+ |       |   |─ attribute_parent_types.json
  :       :   :
 ```
-
 
 For our implementation, the annotation file have to be converted to the HOIA format. The conversion can be conducted as follows.
 ```
@@ -82,6 +89,11 @@ PYTHONPATH=data/v-coco \
 Note that only Python2 can be used for this conversion because `vsrl_utils.py` in the v-coco repository shows a error with Python3.
 
 V-COCO annotations with the HOIA format, `corre_vcoco.npy`, `test_vcoco.json`, and `trainval_vcoco.json` will be generated to `annotations` directory.
+
+To get vaw_train.json, vaw_val.json, vaw_test.json, vaw_train_cat_info.json, please run the following commands.
+```
+python tools/convert_vaw_ann_coco.py && python tools/convert_vaw_ann.py && python tools/get_vaw_cat_info.py
+```
 
 ### Pre-trained parameters
 Our QPIC have to be pre-trained with the COCO object detection dataset. For the HICO-DET training, this pre-training can be omitted by using the parameters of DETR. The parameters can be downloaded from [here](https://dl.fbaipublicfiles.com/detr/detr-r50-e632da11.pth) for the ResNet50 backbone, and [here](https://dl.fbaipublicfiles.com/detr/detr-r101-2c7b67e5.pth) for the ResNet101 backbone. For the V-COCO training, this pre-training has to be carried out because some images of the V-COCO evaluation set are contained in the training set of DETR. You have to pre-train QPIC without those overlapping images by yourself for the V-COCO evaluation.
@@ -121,50 +133,72 @@ python convert_parameters.py \
 
 
 
-# Training
+## Training
 
-## For single task training
+### For HOI classifier training  
 ```
-CUDA_VISIBLE_DEVICES=1,2 GPUS_PER_NODE=2 ./tool/run_dist_launch.sh 2 configs/mtl_train.sh \
-        --mtl_data [\'vaw\'] \
-        --output_dir checkpoints/vaw \
-        --pretrained params/detr-r50-pre-vaw.pth
+CUDA_VISIBLE_DEVICES=0,1 GPUS_PER_NODE=2 ./tool/run_dist_launch.sh 2 configs/mtl_train.sh \
+	--mtl_data [\'hico\',\'vcoco\'] \
+	--output_dir checkpoints/vcoco_hico/ \
+	--pretrained params/detr-r50-pre-mtl.pth \
+	--br \
+	--att_loss_coef 0 \
+	--epochs 90 \
+ 	--lr_drop 60 
 ```  
 
-## For multi task training
+### For Attribute classifier training
 ```
-CUDA_VISIBLE_DEVICES=1,2 GPUS_PER_NODE=2 ./tool/run_dist_launch.sh 2 configs/mtl_train.sh \
-        --mtl_data [\'vcoco\',\'hico\',\'vaw\'] \
-        --output_dir checkpoints/mtl_all \
-        --pretrained params/detr-r50-pre-mtl.pth
+CUDA_VISIBLE_DEVICES=0,1 GPUS_PER_NODE=2 ./tool/run_dist_launch.sh 2 configs/mtl_train.sh \
+        --mtl_data [\'vaw\'] \
+        --output_dir checkpoints/hoi_att/ \
+        --pretrained checkpoints/vcoco_hico/checkpoint.pth \
+        --freeze_hoi \
+        --epochs 30 \
+        --lr_drop 20
 ``` 
 
-# Evaluation
+## Evaluation
 
-## Multi task learning evaluation
+### HOI + ATT evaluation command
 ```
-configs/mtl_eval.sh \
-        --pretrained checkpoints/mtl_all/checkpoint.pth \
-        --output_dir test_results/ \
-        --mtl_data [\'vcoco\',\'hico\',\'vaw\']
-```
-
-## vcoco evaluation
-```
-"test_mAP_all": 0.5455718251429631, "test_mAP_thesis": 0.5663461447990525
-```
-## hico evaluation
-```
-"test_mAP": 0.27877264960450454, "test_mAP rare": 0.20416854381834068, "test_mAP non-rare": 0.30105699289128085, "test_mean max recall": 0.6536133057960736
-```
-## vaw evaluation
-```
-"test_mAP": 0.0524253535493328, "test_mAP rare": 0.029776368059209662, "test_mAP non-rare": 0.07093753803669373, "test_mean max recall": 0.37233911507467743
+CUDA_VISIBLE_DEVICES=0 configs/mtl_eval.sh \
+        --pretrained checkpoints/hoi_att/checkpoint.pth \
+        --output_dir test_results/hoi_att/ \
+        --mtl_data [\'hico\',\'vcoco\',\'vaw\']
 ```
 
-# Video demo version 1
+#### vcoco evaluation results 
+```
+"test_mAP_all": 0.5613568582747551, "test_mAP_thesis": 0.5843414931315771
+```
+
+#### hico evaluation results
+```
+"test_mAP": 0.279366822517764, "test_mAP rare": 0.21431380829063984, "test_mAP non-rare": 0.2987982423518401, "test_mean max recall": 0.656295577526744
+```
+
+#### vaw evaluation results
+```
+"test_mAP_all": 0.448491564897126, "test_mAP_head": 0.5077881920602825, "test_mAP_medium": 0.4351269222618499, "test_mAP_tail": 0.2618922747534062
+```
+
+### checkpoint
+
+We provide checkpoint for the model trained on the task for HOI and HOI + ATT in the [GoogleDrive](https://drive.google.com/drive/folders/1ASQWFCUg3u3ebO8fexRc5mW6nv6l9eGa?usp=sharing).
+
+## Demo
+
+We also provide live demo for both HOI detection and attribute classification for detected human and boxes.
+Its command is as follows.
+```
+python demo_final.py --checkpoint checkpoint/checkpoint.pth --inf_type ['vcoco','vaw'] --mtl_data ['vcoco','vaw'] --mtl --webcam  True --show_vid --vis_demo --top_k 10 --threshold 0.4 --fps 30
+```
+
+<!-- 
+## Video demo version 1
 ![cycle2](https://user-images.githubusercontent.com/87055052/208564990-197d157c-c830-4cae-9557-9d7900f1b8c6.gif)
-## For vcoco verb inference
+### For vcoco verb inference
 ```
 python vis_demo.py \
         --checkpoint checkpoints/mtl_all/checkpoint.pth \
@@ -178,7 +212,7 @@ python vis_demo.py \
         --fps 30
 ```  
 
-## For hico verb inference
+### For hico verb inference
 ```
 python vis_demo.py \
         --checkpoint checkpoints/mtl_all/checkpoint.pth \
@@ -192,7 +226,7 @@ python vis_demo.py \
         --fps 30
 ``` 
 
-## For hoi inference (hico verb + vcoco verb) 
+### For hoi inference (hico verb + vcoco verb) 
 ```
 python vis_demo.py \
         --checkpoint checkpoints/mtl_all/checkpoint.pth \
@@ -206,7 +240,7 @@ python vis_demo.py \
         --fps 30
 ``` 
 
-## For vaw attribute inference
+### For vaw attribute inference
 ```
 python vis_demo.py \
         --checkpoint checkpoints/mtl_all/checkpoint.pth \
@@ -220,7 +254,7 @@ python vis_demo.py \
         --fps 30
 ```  
 
-## For vaw color inference
+### For vaw color inference
 ```
 python vis_demo.py \
         --checkpoint checkpoints/mtl_all/checkpoint.pth \
@@ -235,10 +269,10 @@ python vis_demo.py \
         --color
 ```  
 
-# Video demo version 2 
+## Video demo version 2 
 ![cycle](https://user-images.githubusercontent.com/87055052/208564037-b6054ccd-bc28-41ea-bc77-ce1195a19f33.gif)
 
-## For hoi+attribute inference
+### For hoi+attribute inference
 ```
 python vis_demo2.py \
         --checkpoint checkpoints/mtl_all/checkpoint.pth \
@@ -251,9 +285,10 @@ python vis_demo2.py \
         --threshold 0.4 \
         --fps 30 \
         --all
-```        
-## Citation
-Our implementation is based on the official code QPIC
+```         -->
+
+## Acknowledgement
+Our implementation is based on the official code [QPIC](https://github.com/hitachi-rd-cv/qpic)
 ```
 @inproceedings{tamura_cvpr2021,
 author = {Tamura, Masato and Ohashi, Hiroki and Yoshinaga, Tomoaki},
@@ -262,3 +297,6 @@ booktitle={CVPR},
 year = {2021},
 }
 ```
+
+## License
+This project is open sourced under Apache License 2.0, see LICENSE.
