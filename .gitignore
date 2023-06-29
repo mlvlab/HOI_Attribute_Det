@@ -12,7 +12,7 @@ checkpoint/**
 !.gitkeep
 checkbbox.py
 configs/
-datasets/
+#datasets/
 evaluations/
 test_results/
 test_results2/

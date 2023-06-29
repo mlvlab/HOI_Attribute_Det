@@ -46,25 +46,6 @@ class VAWDetection(torch.utils.data.Dataset):
                             72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
                             82, 84, 85, 86, 87, 88, 89, 90)
         
-    ############################################################################
-    # Number Method
-    ############################################################################
-    # def get_metadata(self):
-    #     meta = builtin_meta._get_coco_instances_meta()
-    #     self.COCO_CLASSES = meta['coco_classes']
-    #     self._valid_obj_ids = [id for id in meta['thing_dataset_id_to_contiguous_id'].keys()]
-    #     self._valid_att_names= [k for k,v in self.attribute_names.items()]
-    #     self._valid_att_ids = [v for k,v in self.attribute_names.items()]
-    
-
-    # def get_valid_obj_ids(self):
-    #     return self._valid_obj_ids
-
-    # def get_attributes(self):
-    #     return self._valid_att_names
-
-    # def num_category(self):
-    #     return len(self.COCO_CLASSES)
 
     def num_attributes(self):
         return len(self._valid_att_ids)
@@ -86,28 +67,7 @@ class VAWDetection(torch.utils.data.Dataset):
 
         # guard against no boxes via resizing
         boxes = torch.as_tensor(img_anno['boxes'], dtype=torch.float32).reshape(-1, 4)
-        # if self.img_set == 'train':
 
-
-        # box_list = []
-        # for bbox in img_anno['boxes']:
-        #     converted_bbox = self.convert_bbox(bbox)
-        #     box_list.append(converted_bbox)
-        # boxes = torch.tensor(box_list)
-        # boxes[:,0::2] = boxes[:,0::2]/w
-        # boxes[:,1::2] = boxes[:,1::2]/h
-
-
-        # else:
-        #     boxes = img_anno['boxes']
-        # masks = [] 
-        # for polygon in img_anno['instance_polygon']:
-        #     if polygon is None:
-        #         mask = torch.ones((h, w)).unsqueeze(0)
-        #     else:
-        #         mask = convert_coco_poly_to_mask(np.array(polygon), h, w)
-        #     masks.append(mask)
-        # masks = torch.cat(masks)
 
         mask_list = []
         for polygon in img_anno['instance_polygon']:
@@ -125,7 +85,7 @@ class VAWDetection(torch.utils.data.Dataset):
         #     if polygon is None:
         #         torch.ones
 
-        object_names = img_anno['object_name']
+        #object_names = img_anno['object_name']
         #clip_embeds = torch.tensor(img_anno['clip_em'])
 
         if self.img_set == 'train':
@@ -166,7 +126,7 @@ class VAWDetection(torch.utils.data.Dataset):
             neg_att_classes = neg_att_classes[keep]
             target['masks'] = masks[keep]
             #target['polygons'] =  polygons
-            target['object_name'] = object_names
+            #target['object_name'] = object_names
             #target['clip_em'] = clip_embeds[keep]
             target['labels'] = obj_classes
             target['pos_att_classes'] = pos_att_classes
@@ -255,14 +215,6 @@ def make_vaw_transforms(image_set):
         return T.Compose([
             T.RandomHorizontalFlip(),
             T.ColorJitter(.4, .4, .4),
-            # T.RandomSelect(
-            # T.RandomResize(scales, max_size=1333)
-            #     T.Compose([
-            #         T.RandomResize([400, 500, 600]),
-            #         T.RandomSizeCrop(384, 600),
-            #         T.RandomResize(scales, max_size=1333),
-            #     ])
-            # )
             T.RandomResize(scales, max_size=1333)
             ,
             normalize,
@@ -284,7 +236,6 @@ def make_vaw_transforms(image_set):
 
 
 def build(image_set, args):
-    # root = Path(args.data_path)
     root = Path('data/vaw')
     assert root.exists(), f'provided HOI path {root} does not exist'
     PATHS = {
@@ -293,18 +244,10 @@ def build(image_set, args):
         'test': (root / 'images' , root / 'annotations' / 'vaw_test.json')
     }
 
-    # CORRECT_MAT_PATH = root / 'annotations' / 'corre_hico.npy'
-    # attribute_freq = root / 'annotations' / 'vaw_orig_train_cat_info.json'
     attribute_index = root / 'annotations' / 'attribute_index.json'    
 
     img_folder, anno_file = PATHS[image_set]
     dataset = VAWDetection(image_set, img_folder, anno_file,attribute_index, transforms=make_vaw_transforms(image_set),
                             num_queries=args.num_queries)
-    if image_set == 'val' or image_set == 'test':
-            
-        # dataset.set_rare_attrs(attribute_freq)
-        # dataset._valid_att_idxs(attribute_freq)
-        dataset.set_class_imb_attrs(attribute_index)
-        
     return dataset
 
