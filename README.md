@@ -71,7 +71,6 @@ neubla_hoi_att
  |       |   |─ vaw_train.json
  |       |   |─ vaw_test.json
  |       |   |─ vaw_train_cat_info.json
- |       |   |─ vaw_train_cat_info.json
  |       |   |─ head_tail.json
  |       |   |─ attribute_types.json
  |       |   |─ attribute_parent_types.json
