@@ -21,10 +21,33 @@ Instead of using the original annotations files, we use the annotation files pro
 #### V-COCO
 First clone the repository of V-COCO from [here](https://github.com/s-gupta/v-coco), and then follow the instruction to generate the file `instances_vcoco_all_2014.json`. Next, download the prior file `prior.pickle` from [here](https://drive.google.com/drive/folders/10uuzvMUCVVv95-xAZg5KS94QXm7QXZW4). Place the files and make directories as follows.
 
+For our implementation, the annotation file have to be converted to the HOIA format. The conversion can be conducted as follows.
+```
+PYTHONPATH=data/v-coco \
+        python convert_vcoco_annotations.py \
+        --load_path data/v-coco/data \
+        --prior_path data/v-coco/prior.pickle \
+        --save_path data/v-coco/annotations
+```
+Note that only Python2 can be used for this conversion because `vsrl_utils.py` in the v-coco repository shows a error with Python3.
+
+V-COCO annotations with the HOIA format, `corre_vcoco.npy`, `test_vcoco.json`, and `trainval_vcoco.json` will be generated to `annotations` directory.
+
 #### VAW
 The images can be downloaded from the [Visual Genome](https://visualgenome.org/) website, and annotation files can be downloaded from the [GoogleDrive](https://drive.google.com/drive/folders/1ASQWFCUg3u3ebO8fexRc5mW6nv6l9eGa?usp=sharing). Place the files as follows.
 
+We conduct data preprocessing from the original VAW data annotation files (train: `train_part1.json`, `train_part2.json`, val: `val.json`, test: `test.json`) for the ease of data loader implementation.
+Please run the following commands and you will get three annotation files (`vaw_train.json`, `vaw_val.json`, `vaw_test.json`) for train/val/test.
+```
+python tools/convert_vaw_ann.py
+```
+Additionally, `vaw_train_cat_info.json`, which is used in the federated loss for the frequency-based sampling, contains statistics of attribute label frequency and can be obtained by running the command below.
+```
+python tools/get_vaw_cat_info.py
+```
+The rest of the files are used as they are.
 
+The format for the final data directories should be as follows.
 ```
 neubla_hoi_att
  |─ data
@@ -77,22 +100,7 @@ neubla_hoi_att
  :       :   :
 ```
 
-For our implementation, the annotation file have to be converted to the HOIA format. The conversion can be conducted as follows.
-```
-PYTHONPATH=data/v-coco \
-        python convert_vcoco_annotations.py \
-        --load_path data/v-coco/data \
-        --prior_path data/v-coco/prior.pickle \
-        --save_path data/v-coco/annotations
-```
-Note that only Python2 can be used for this conversion because `vsrl_utils.py` in the v-coco repository shows a error with Python3.
 
-V-COCO annotations with the HOIA format, `corre_vcoco.npy`, `test_vcoco.json`, and `trainval_vcoco.json` will be generated to `annotations` directory.
-
-To get vaw_train.json, vaw_val.json, vaw_test.json, vaw_train_cat_info.json, please run the following commands.
-```
-python tools/convert_vaw_ann_coco.py && python tools/convert_vaw_ann.py && python tools/get_vaw_cat_info.py
-```
 
 ### Pre-trained parameters
 Our QPIC have to be pre-trained with the COCO object detection dataset. For the HICO-DET training, this pre-training can be omitted by using the parameters of DETR. The parameters can be downloaded from [here](https://dl.fbaipublicfiles.com/detr/detr-r50-e632da11.pth) for the ResNet50 backbone, and [here](https://dl.fbaipublicfiles.com/detr/detr-r101-2c7b67e5.pth) for the ResNet101 backbone. For the V-COCO training, this pre-training has to be carried out because some images of the V-COCO evaluation set are contained in the training set of DETR. You have to pre-train QPIC without those overlapping images by yourself for the V-COCO evaluation.
@@ -288,14 +296,6 @@ python vis_demo2.py \
 
 ## Acknowledgement
 Our implementation is based on the official code [QPIC](https://github.com/hitachi-rd-cv/qpic)
-```
-@inproceedings{tamura_cvpr2021,
-author = {Tamura, Masato and Ohashi, Hiroki and Yoshinaga, Tomoaki},
-title = {{QPIC}: Query-Based Pairwise Human-Object Interaction Detection with Image-Wide Contextual Information},
-booktitle={CVPR},
-year = {2021},
-}
-```
 
 ## License
 This project is open sourced under Apache License 2.0, see LICENSE.
