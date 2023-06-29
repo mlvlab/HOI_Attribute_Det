@@ -37,6 +37,7 @@ if __name__ == '__main__':
     instance_num = sum([v for k,v in instance_counts.items()])
     image_num = sum([v for k,v in image_counts.items()])
     print(instance_num,image_num)
+    import pdb; pdb.set_trace()
     out_path = '/vaw_train_cat_info.json'
     json.dump(cat_info, open('/'.join(args.ann.split('/')[:3])+out_path, 'w'))
         
