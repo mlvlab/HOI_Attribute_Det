@@ -183,9 +183,9 @@ CUDA_VISIBLE_DEVICES=0 configs/mtl_eval.sh \
 "test_mAP_all": 0.44842080500781956, "test_mAP_head": 0.5075082695865356, "test_mAP_medium": 0.43483955797939167, "test_mAP_tail": 0.26329801535736735
 ```
 
-### checkpoint
+### Checkpoint & Annotations(vaw)
 
-We provide checkpoint for the model trained on the task for HOI and HOI + ATT in the [GoogleDrive](https://drive.google.com/drive/folders/1ASQWFCUg3u3ebO8fexRc5mW6nv6l9eGa?usp=sharing).
+We provide annotations(vaw) and checkpoint for the model trained on the task for HOI and HOI + ATT in the [GoogleDrive](https://drive.google.com/drive/folders/1ASQWFCUg3u3ebO8fexRc5mW6nv6l9eGa?usp=sharing).
 
 ## Demo
 
