@@ -170,17 +170,17 @@ CUDA_VISIBLE_DEVICES=0 configs/mtl_eval.sh \
 
 #### vcoco evaluation results 
 ```
-"test_mAP_all": 0.5613568582747551, "test_mAP_thesis": 0.5843414931315771
+"test_mAP_all": 0.5617487743161225, "test_mAP_thesis": 0.5845862689865218
 ```
 
 #### hico evaluation results
 ```
-"test_mAP": 0.279366822517764, "test_mAP rare": 0.21431380829063984, "test_mAP non-rare": 0.2987982423518401, "test_mean max recall": 0.656295577526744
+"test_mAP": 0.2793352255950577, "test_mAP rare": 0.21625792842648914, "test_mAP non-rare": 0.2981764961778769, "test_mean max recall": 0.656344699860012
 ```
 
 #### vaw evaluation results
 ```
-"test_mAP_all": 0.448491564897126, "test_mAP_head": 0.5077881920602825, "test_mAP_medium": 0.4351269222618499, "test_mAP_tail": 0.2618922747534062
+"test_mAP_all": 0.44842080500781956, "test_mAP_head": 0.5075082695865356, "test_mAP_medium": 0.43483955797939167, "test_mAP_tail": 0.26329801535736735
 ```
 
 ### checkpoint
