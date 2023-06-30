@@ -471,7 +471,6 @@ class SetCriterionHOI(nn.Module):
             'obj_cardinality': self.loss_obj_cardinality,
             'verb_labels': self.loss_verb_labels,
             'att_labels': self.loss_att_labels,
-            'mask_labels' : self.loss_mask_labels,
             'sub_obj_boxes': self.loss_sub_obj_boxes
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
