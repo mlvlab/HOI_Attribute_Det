@@ -14,7 +14,6 @@ from datasets.coco_eval import CocoEvaluator
 from datasets.panoptic_eval import PanopticEvaluator
 from datasets.hico_eval import HICOEvaluator
 from datasets.vcoco_eval import VCOCOEvaluator
-# from datasets.vaw_eval import VAWEvaluator
 from datasets.vaw_evaluator import Evaluator
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
@@ -26,11 +25,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     if hasattr(criterion, 'loss_labels'):
         metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
-    # else:
-    #     metric_logger.add_meter('obj_class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
-    header = 'Epoch: [{}]'.format(epoch)
-    
-    # print_freq = int(len(data_loader)/10)
+    header = 'Epoch: [{}]'.format(epoch)    
     print_freq = 10
     for samples,targets in metric_logger.log_every(data_loader, print_freq, header):
         dataset_name = targets[0]['dataset']
@@ -176,7 +171,7 @@ def evaluate_hoi_att(dataset_file, model, postprocessors, data_loader, subject_c
             dtype = targets[0]['type'] 
             dataset=targets[0]['dataset'] 
             samples = samples.to(device)
-            outputs = model(samples,None,dtype,dataset) #outputs['pred_logits'].shape : torch.Size([8, 620])
+            outputs = model(samples,None,dtype,dataset) 
             orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
             results = postprocessors(outputs, orig_target_sizes)
             preds.extend(list(itertools.chain.from_iterable(utils.all_gather(results))))            
@@ -210,8 +205,11 @@ def evaluate_hoi_att(dataset_file, model, postprocessors, data_loader, subject_c
             outputs = model(samples,targets,dtype,dataset,args)['pred_logits'].sigmoid()
             preds.extend(outputs.detach().cpu().numpy())
 
-        preds = np.array(preds) #(31819, 620)
-        annos = np.load(args.vaw_gts) #(31819, 620)        
+        #(31819, 620)
+        preds = np.array(preds) 
+
+        #(31819, 620)        
+        annos = np.load(args.vaw_gts) 
         
         evaluator = Evaluator(
             args.fpath_attribute_index, args.fpath_attribute_types,
