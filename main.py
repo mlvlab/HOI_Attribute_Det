@@ -29,7 +29,6 @@ def get_args_parser():
     parser.add_argument('--lr_drop', default=20, type=int)
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
                         help='gradient clipping max norm')
-
     # Model parameters
     parser.add_argument('--frozen_weights', type=str, default=None,
                         help="Path to the pretrained model. If set, only the mask head will be trained")
@@ -62,7 +61,7 @@ def get_args_parser():
     parser.add_argument('--masks', action='store_true',
                         help="Train segmentation head if the flag is provided")
 
-    # HOI
+    # HOI parameters
     parser.add_argument('--hoi', action='store_true',
                         help="Train for HOI if the flag is provided")
     parser.add_argument('--num_obj_classes', type=int, default=81,
@@ -75,7 +74,7 @@ def get_args_parser():
     parser.add_argument('--loss_type', type=str, default='focal',
                         help='Loss type for the verb classification')
                         
-    #vaw evaluation
+    # vaw evaluation
     parser.add_argument('--vaw_gts', default='data/vaw/annotations/test_orig_vaw.npy')
     parser.add_argument('--fpath_attribute_index', type=str,
                         default='data/vaw/annotations/attribute_index.json') #o
@@ -133,7 +132,6 @@ def get_args_parser():
                         help="Number of decoding layers in HOI transformer")
     parser.add_argument('--att_dim_feedforward', default=2048, type=int,
                         help="Number of decoding layers in HOI transformer")
-    # parser.add_argument('--hoi_mode', type=str, default=None, help='[inst | pair | all]')
     parser.add_argument('--num_att_queries', default=100, type=int,
                         help="Number of Queries for Interaction Decoder")
     parser.add_argument('--att_aux_loss', action='store_true')
@@ -141,9 +139,6 @@ def get_args_parser():
     parser.add_argument('--num_obj_att_classes', type=int, default=1,
                         help="Number of object classes")
 
-    #masked roi align
-    parser.add_argument('--masking', action='store_true')
-    parser.add_argument('--test_polygon', default='data/vaw/annotations/test_vaw_polygon.npy')
 
     # mtl
     parser.add_argument('--mtl', action='store_true')
@@ -154,21 +149,17 @@ def get_args_parser():
     parser.add_argument('--num_vcoco_verb_classes', type=int, default=29,
                     help="Number of verb coco classes")
 
-    #eval
+    # eval
     parser.add_argument('--max_pred', default=100, type=int)
     
-
     # dataset parameters
     parser.add_argument('--dataset_file', default='coco')
     parser.add_argument('--coco_path', type=str)
     parser.add_argument('--coco_panoptic_path', type=str)
     parser.add_argument('--remove_difficult', action='store_true')
     parser.add_argument('--data_path', type=str)
-
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
-
-
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
     parser.add_argument('--seed', default=42, type=int)
@@ -183,30 +174,11 @@ def get_args_parser():
                         help='number of distributed processes')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
 
-    #backbone roi_align flag
+    # backbone roi_align flag
     parser.add_argument('--br', action='store_true')
 
-    #freeze transformer (pretrained hoi parmeters)
+    # freeze hoi transformer flag 
     parser.add_argument('--freeze_hoi', action='store_true')
-
-
-    #feature map vis 
-    parser.add_argument('--img_path', default='samples/2361755.jpg')
-    parser.add_argument('--vis_img', action='store_true')
-
-    #mask prediction mode 
-    parser.add_argument('--predict_mask', action='store_true')
-
-    #masking argument
-    parser.add_argument('--output_masking', action='store_true')
-    parser.add_argument('--input_masking', action='store_true')
-
-    #object embedding argument
-    parser.add_argument('--object_embedding', action='store_true')
-
-
-    #fc version
-    parser.add_argument('--fc_version', action='store_true')
 
     # logging
     parser.add_argument('--wandb', action='store_true')
@@ -224,17 +196,13 @@ def get_args_parser():
     parser.add_argument('--fps', default=30,type=int,help='fps')
     parser.add_argument('--all', action='store_true',help='check hoi+attribute inference')
     parser.add_argument('--color', action='store_true',help='only color inference for vaw')
-
     parser.add_argument('--webcam', default='', type=str)
     parser.add_argument('--vis_demo',action='store_true')
     parser.add_argument('--iou_threshold', default=0.9,type=float,help='iou threshold value')
     parser.add_argument('--attr_threshold', default=0.4,type=float)
     parser.add_argument('--attr_topk', default=1,type=int)
-    
     parser.add_argument('--only_vaw_vis',action='store_true')
     parser.add_argument('--out_file', default='vis.mp4', type=str)
-
-
     return parser
 
 def main(args):
@@ -308,9 +276,6 @@ def main(args):
 
     model_without_ddp = model
     
-    # if args.freeze_hoi:
-    #     import pdb; pdb.set_trace()
-
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
@@ -331,7 +296,6 @@ def main(args):
 
     if not args.hoi and not args.att_det:
         if args.dataset_file == "coco_panoptic":
-            # We also evaluate AP during panoptic training, on original coco DS
             coco_val = datasets.coco.build("val", args)
             base_ds = get_coco_api_from_dataset(coco_val)
         else:
@@ -368,7 +332,6 @@ def main(args):
                         if args.output_dir and utils.is_main_process():
                             with (output_dir / "log.txt").open("a") as f:
                                 f.write(json.dumps(log_stats) + "\n")
-
                         if utils.get_rank() == 0 and args.wandb:
                     
                             wandb.log({
@@ -405,18 +368,6 @@ def main(args):
                                 'vaw_mAP_tail':test_stats['mAP_tail']
                             })
 
-
-
-                    # elif 'vaw' in dataset_name:
-                    #     if utils.get_rank() == 0 and args.wandb:
-                    #         wandb.log({
-                    #             'mAP': test_stats['mAP'],
-                    #             'mAP rare': test_stats['mAP rare'],
-                    #             'mAP non-rare':test_stats['mAP non-rare'],
-                    #             'mean max recall':test_stats['mean max recall']
-                    #         })
-                    #     performance=test_stats['mAP']
-                    # coco_evaluator = None
             else:
                 test_stats,dataset_name = evaluate_hoi_att(args.dataset_file, model, postprocessors, data_loader_val, args.subject_category_id, device, args)
                 if 'v-coco' in dataset_name:
@@ -462,14 +413,6 @@ def main(args):
             if 'attribute' not in name:
                 param.requires_grad = False
 
-        # trainable_parameters = []
-        # for name, param in model.named_parameters():
-        #     if param.requires_grad:
-        #         trainable_parameters.append(name)
-        
-        # print(trainable_parameters)
-        # exit()
-
     if args.wandb:
         os.environ['WANDB_API_KEY'] = '3f007fbea1ce3a73739cf5da719f6d4fe7c91960'
 
@@ -483,14 +426,9 @@ def main(args):
         )
         wandb.watch(model)
 
-
-
     print("Start training")
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
-        # if args.distributed:
-            # for st in sampler_train:
-            #     st.set_epoch(epoch)
 
         train_stats = train_one_epoch(
             model, criterion, data_loader_train, optimizer, device, epoch,
@@ -546,7 +484,6 @@ def main(args):
                             performance=test_stats['mAP']
 
                         elif 'vaw' in dataset_name:
-                            #CATEGORIES = ['all', 'head', 'medium', 'tail'] 
                             if args.output_dir and utils.is_main_process():
                                 with (output_dir / "log.txt").open("a") as f:
                                     f.write(json.dumps(log_stats) + "\n")
@@ -558,35 +495,6 @@ def main(args):
                                     'vaw_mAP_medium':test_stats['mAP_medium'],
                                     'vaw_mAP_tail':test_stats['mAP_tail']
                                 })
-
-                        # #if 'v-coco' in os.fspath(dlv.dataset.img_folder) or 'hico' in os.fspath(dlv.dataset.img_folder):
-                        # test_stats,dataset_name = evaluate_hoi_att(args.dataset_file, model, postprocessors, dlv, args.subject_category_id, device, args)
-                        # if 'v-coco' in dataset_name:
-                        #     if utils.get_rank() == 0 and args.wandb:                        
-                        #         wandb.log({
-                        #             'mAP_all': test_stats['mAP_all'],
-                        #             'mAP_thesis':test_stats['mAP_thesis']
-                        #         })
-                        #     performance=test_stats['mAP_thesis']
-                        # elif 'hico' in dataset_name:
-                        #     if utils.get_rank() == 0 and args.wandb:
-                        #         wandb.log({
-                        #             'mAP': test_stats['mAP'],
-                        #             'mAP rare': test_stats['mAP rare'],
-                        #             'mAP non-rare':test_stats['mAP non-rare'],
-                        #             'mean max recall':test_stats['mean max recall']
-                        #         })
-                        #     performance=test_stats['mAP']
-                        # elif 'vaw' in dataset_name:
-                        #     if utils.get_rank() == 0 and args.wandb:
-                        #         wandb.log({
-                        #             'mAP': test_stats['mAP'],
-                        #             'mAP rare': test_stats['mAP rare'],
-                        #             'mAP non-rare':test_stats['mAP non-rare'],
-                        #             'mean max recall':test_stats['mean max recall']
-                        #         })
-                        #     performance=test_stats['mAP']
-                        # coco_evaluator = None
                 else:
                     test_stats,dataset_name = evaluate_hoi_att(args.dataset_file, model, postprocessors, data_loader_val, args.subject_category_id, device, args)
                     if 'v-coco' in dataset_name:
@@ -620,26 +528,6 @@ def main(args):
                 test_stats, coco_evaluator = evaluate(
                     model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir
                 )
-
-            # log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-            #             **{f'test_{k}': v for k, v in test_stats.items()},
-            #             'epoch': epoch,
-            #             'n_parameters': n_parameters}
-
-            # if args.output_dir and utils.is_main_process():
-            #     with (output_dir / "log.txt").open("a") as f:
-            #         f.write(json.dumps(log_stats) + "\n")
-
-            #     # for evaluation logs
-            #     if coco_evaluator is not None:
-            #         (output_dir / 'eval').mkdir(exist_ok=True)
-            #         if "bbox" in coco_evaluator.coco_eval:
-            #             filenames = ['latest.pth']
-            #             if epoch % 50 == 0:
-            #                 filenames.append(f'{epoch:03}.pth')
-            #             for name in filenames:
-            #                 torch.save(coco_evaluator.coco_eval["bbox"].eval,
-            #                         output_dir / "eval" / name)
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
